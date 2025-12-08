@@ -5,7 +5,7 @@ await esbuild.build({
   bundle: true,
   platform: 'node',
   target: 'node20',
-  format: 'esm',
+  format: 'cjs',
   outfile: './build/lambda.js',
   minify: true,
   sourcemap: true,
