@@ -1,0 +1,64 @@
+{
+  "name": "docintel-pro",
+  "version": "1.0.0",
+  "description": "Production TypeScript monorepo for DocIntel Pro (Textract + Bedrock + NestJS + Next.js)",
+  "private": true,
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "dev": "pnpm --filter \"./apps/*\" dev",
+    "dev:api": "pnpm --filter api dev",
+    "dev:web": "pnpm --filter web dev",
+    "build": "pnpm --filter \"./packages/*\" build && pnpm --filter \"./apps/*\" build",
+    "build:api": "pnpm --filter api build",
+    "build:web": "pnpm --filter web build",
+    "build:infra": "pnpm --filter infra build",
+    "test": "pnpm --filter \"./apps/*\" --filter \"./packages/*\" test",
+    "test:api": "pnpm --filter api test",
+    "test:web": "pnpm --filter web test",
+    "lint": "eslint . --max-warnings=0",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml}\"",
+    "typecheck": "pnpm --filter \"./apps/*\" --filter \"./packages/*\" typecheck",
+    "clean": "pnpm --filter \"./apps/*\" --filter \"./packages/*\" --filter \"./infra\" clean && rm -rf node_modules",
+    "deploy": "pnpm --filter infra deploy",
+    "deploy:api": "pnpm --filter infra deploy:api",
+    "cdk": "pnpm --filter infra cdk",
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^8.18.1",
+    "@typescript-eslint/parser": "^8.18.1",
+    "eslint": "^9.17.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-prettier": "^5.2.1",
+    "husky": "^9.1.7",
+    "lint-staged": "^15.2.11",
+    "prettier": "^3.4.2",
+    "typescript": "^5.7.2"
+  },
+  "lint-staged": {
+    "*.{ts,tsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,md,yml,yaml}": [
+      "prettier --write"
+    ]
+  },
+  "keywords": [
+    "textract",
+    "bedrock",
+    "nestjs",
+    "nextjs",
+    "aws",
+    "monorepo",
+    "typescript"
+  ],
+  "author": "",
+  "license": "MIT"
+}
