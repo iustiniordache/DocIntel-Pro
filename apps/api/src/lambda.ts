@@ -1,45 +1,35 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
-import { Handler, Context, APIGatewayProxyEvent } from 'aws-lambda';
-import { INestApplication } from '@nestjs/common';
+import { Callback, Context, Handler } from 'aws-lambda';
+import serverlessExpress from '@codegenie/serverless-express';
 
-let cachedApp: INestApplication | null = null;
+let server: Handler;
 
-async function bootstrapApp() {
-  if (!cachedApp) {
-    const app = await NestFactory.create(AppModule, {
-      logger: ['error', 'warn'],
-    });
+async function bootstrap(): Promise<Handler> {
+  const app = await NestFactory.create(AppModule, {
+    logger: ['error', 'warn', 'log'],
+  });
 
-    app.useGlobalPipes(
-      new ValidationPipe({
-        whitelist: true,
-        forbidNonWhitelisted: true,
-        transform: true,
-      }),
-    );
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+    }),
+  );
 
-    await app.init();
-    cachedApp = app;
-  }
-  return cachedApp;
+  await app.init();
+
+  const expressApp = app.getHttpAdapter().getInstance();
+  return serverlessExpress({ app: expressApp });
 }
 
-export const handler: Handler = async (event: APIGatewayProxyEvent, context: Context) => {
-  const app = await bootstrapApp();
-
-  // Convert API Gateway event to HTTP request
-  const httpAdapter = app.getHttpAdapter();
-
-  try {
-    const response = await httpAdapter.reply({ event, context }, null, event.httpMethod);
-    return response;
-  } catch (error) {
-    console.error('Lambda handler error:', error);
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ message: 'Internal server error' }),
-    };
-  }
+export const handler: Handler = async (
+  event: any,
+  context: Context,
+  callback: Callback,
+) => {
+  server = server ?? (await bootstrap());
+  return server(event, context, callback);
 };
