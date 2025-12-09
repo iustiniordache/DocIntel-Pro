@@ -39,9 +39,6 @@ import {
 import { marshall } from '@aws-sdk/util-dynamodb';
 import { randomUUID } from 'crypto';
 import pino from 'pino';
-import { NestFactory } from '@nestjs/core';
-import { AppModule } from '../app.module';
-import { AppConfigService } from '../config/app-config.service';
 
 // Import types from shared package
 interface UploadRequestBody {
@@ -84,36 +81,48 @@ const MAX_FILENAME_LENGTH = 100;
 const RATE_LIMIT_MAX = 10; // Max uploads per minute
 const ALLOWED_CONTENT_TYPE = 'application/pdf';
 
-// Lazy initialization of NestJS context
-let appContext: Awaited<ReturnType<typeof NestFactory.createApplicationContext>>;
-let configService: AppConfigService;
+// Configuration from environment variables
+const CONFIG = {
+  aws: {
+    region: process.env['AWS_REGION'] || 'us-east-1',
+    accountId: process.env['AWS_ACCOUNT_ID'] || '',
+  },
+  s3: {
+    documentsBucket: process.env['S3_DOCUMENTS_BUCKET'] || '',
+    presignedUrlExpiry: parseInt(process.env['S3_PRESIGNED_URL_EXPIRY'] || '300', 10),
+  },
+  dynamodb: {
+    metadataTable: process.env['DYNAMODB_METADATA_TABLE'] || '',
+    jobsTable: process.env['DYNAMODB_JOBS_TABLE'] || '',
+  },
+  logging: {
+    level: process.env['LOG_LEVEL'] || 'info',
+  },
+};
+
+// Lazy initialization of AWS clients
 let s3Client: S3Client;
 let dynamoClient: DynamoDBClient;
 let logger: pino.Logger;
 
 async function initializeServices() {
-  if (!appContext) {
-    appContext = await NestFactory.createApplicationContext(AppModule, {
-      logger: false, // Disable NestJS logger, use pino
-    });
-    configService = appContext.get(AppConfigService);
-
-    // Initialize AWS SDK clients
+  if (!s3Client) {
     s3Client = new S3Client({
-      region: configService.aws.region,
+      region: CONFIG.aws.region,
     });
 
     dynamoClient = new DynamoDBClient({
-      region: configService.aws.region,
+      region: CONFIG.aws.region,
     });
 
-    // Structured logger
     logger = pino({
-      level: configService.logging.level,
+      level: CONFIG.logging.level,
       formatters: {
         level: (label) => ({ level: label }),
       },
     });
+
+    logger.info('Services initialized');
   }
 }
 
@@ -234,13 +243,13 @@ function validateRequestBody(body: unknown): {
  */
 async function saveDocumentMetadata(metadata: DocumentMetadata): Promise<void> {
   const params: PutItemCommandInput = {
-    TableName: configService.dynamodb.metadataTable,
+    TableName: CONFIG.dynamodb.metadataTable,
     Item: marshall(metadata),
   };
 
   await dynamoClient.send(new PutItemCommand(params));
   logger.info(
-    { documentId: metadata.documentId, table: configService.dynamodb.metadataTable },
+    { documentId: metadata.documentId, table: CONFIG.dynamodb.metadataTable },
     'Document metadata saved',
   );
 }
@@ -257,7 +266,7 @@ async function generatePresignedUrl(
   const s3Key = `documents/${documentId}/${sanitizedFilename}`;
 
   const command = new PutObjectCommand({
-    Bucket: configService.s3.documentsBucket,
+    Bucket: CONFIG.s3.documentsBucket,
     Key: s3Key,
     ContentType: contentType,
     Metadata: {
@@ -267,11 +276,11 @@ async function generatePresignedUrl(
   });
 
   const uploadUrl = await getSignedUrl(s3Client, command, {
-    expiresIn: configService.s3.presignedUrlExpiry,
+    expiresIn: CONFIG.s3.presignedUrlExpiry,
   });
 
   logger.info(
-    { documentId, s3Key, bucket: configService.s3.documentsBucket },
+    { documentId, s3Key, bucket: CONFIG.s3.documentsBucket },
     'Presigned URL generated',
   );
 
@@ -332,15 +341,15 @@ export async function handler(
   logger.info(
     {
       requestId,
-      method: event.requestContext.http.method,
-      path: event.requestContext.http.path,
+      method: event.requestContext?.http?.method || 'UNKNOWN',
+      path: event.requestContext?.http?.path || 'UNKNOWN',
     },
     'Processing upload request',
   );
 
   try {
     // Rate limiting (using source IP as client ID)
-    const clientId = event.requestContext.http.sourceIp;
+    const clientId = event.requestContext?.http?.sourceIp || 'unknown';
     if (!checkRateLimit(clientId)) {
       return errorResponse(
         429,
@@ -403,7 +412,7 @@ export async function handler(
       uploadUrl,
       documentId,
       s3Key,
-      expiresIn: configService.s3.presignedUrlExpiry ?? 300,
+      expiresIn: CONFIG.s3.presignedUrlExpiry,
     };
 
     logger.info({ documentId, filename, requestId }, 'Upload URL generated successfully');
