@@ -10,6 +10,7 @@ import { AppConfigService } from './config/app-config.service';
       load: [appConfig],
       isGlobal: true,
       envFilePath: ['.env.development', '.env'],
+      ignoreEnvFile: process.env['NODE_ENV'] === 'production', // Skip .env files in Lambda
     }),
   ],
   controllers: [AppController],

@@ -30,9 +30,6 @@ import {
 import { marshall } from '@aws-sdk/util-dynamodb';
 import { randomUUID } from 'crypto';
 import pino from 'pino';
-import { NestFactory } from '@nestjs/core';
-import { AppModule } from '../app.module';
-import { AppConfigService } from '../config/app-config.service';
 
 // Types
 interface DocumentMetadata {
@@ -83,41 +80,58 @@ const MAX_FILE_SIZE = 52428800; // 50MB in bytes
 const RETRY_ATTEMPTS = 3;
 const RETRY_BASE_DELAY = 300; // milliseconds
 
-// Lazy initialization of NestJS context
-let appContext: Awaited<ReturnType<typeof NestFactory.createApplicationContext>>;
-let configService: AppConfigService;
+// Configuration from environment variables
+const CONFIG = {
+  aws: {
+    region: process.env['AWS_REGION'] || 'us-east-1',
+    accountId: process.env['AWS_ACCOUNT_ID'] || '',
+  },
+  s3: {
+    documentsBucket: process.env['S3_DOCUMENTS_BUCKET'] || '',
+  },
+  dynamodb: {
+    metadataTable: process.env['DYNAMODB_METADATA_TABLE'] || '',
+    jobsTable: process.env['DYNAMODB_JOBS_TABLE'] || '',
+  },
+  textract: {
+    snsTopicArn: process.env['TEXTRACT_SNS_TOPIC_ARN'] || '',
+    roleArn: process.env['TEXTRACT_ROLE_ARN'] || '',
+  },
+  logging: {
+    level: process.env['LOG_LEVEL'] || 'info',
+  },
+};
+
+// Lazy initialization of AWS clients
 let s3Client: S3Client;
 let textractClient: TextractClient;
 let dynamoClient: DynamoDBClient;
 let logger: pino.Logger;
 
 async function initializeServices() {
-  if (!appContext) {
-    appContext = await NestFactory.createApplicationContext(AppModule, {
-      logger: false, // Disable NestJS logger, use pino
-    });
-    configService = appContext.get(AppConfigService);
-
+  if (!s3Client) {
     // Initialize AWS SDK clients
     s3Client = new S3Client({
-      region: configService.aws.region,
+      region: CONFIG.aws.region,
     });
 
     textractClient = new TextractClient({
-      region: configService.aws.region,
+      region: CONFIG.aws.region,
     });
 
     dynamoClient = new DynamoDBClient({
-      region: configService.aws.region,
+      region: CONFIG.aws.region,
     });
 
     // Structured logger
     logger = pino({
-      level: configService.logging.level,
+      level: CONFIG.logging.level,
       formatters: {
         level: (label) => ({ level: label }),
       },
     });
+
+    logger.info('Services initialized');
   }
 }
 
@@ -195,13 +209,13 @@ async function validatePdfFile(bucket: string, key: string): Promise<ValidationR
  */
 async function saveDocumentMetadata(metadata: DocumentMetadata): Promise<void> {
   const params: PutItemCommandInput = {
-    TableName: configService.dynamodb.metadataTable,
+    TableName: CONFIG.dynamodb.metadataTable,
     Item: marshall(metadata),
   };
 
   await dynamoClient.send(new PutItemCommand(params));
   logger.info(
-    { documentId: metadata.documentId, table: configService.dynamodb.metadataTable },
+    { documentId: metadata.documentId, table: CONFIG.dynamodb.metadataTable },
     'Document metadata saved',
   );
 }
@@ -212,7 +226,7 @@ async function saveDocumentMetadata(metadata: DocumentMetadata): Promise<void> {
 async function saveJobMetadata(job: ProcessingJob): Promise<void> {
   try {
     const params: PutItemCommandInput = {
-      TableName: configService.dynamodb.jobsTable,
+      TableName: CONFIG.dynamodb.jobsTable,
       Item: marshall(job),
     };
 
@@ -221,7 +235,7 @@ async function saveJobMetadata(job: ProcessingJob): Promise<void> {
       {
         jobId: job.jobId,
         documentId: job.documentId,
-        table: configService.dynamodb.jobsTable,
+        table: CONFIG.dynamodb.jobsTable,
       },
       'Job metadata saved',
     );
@@ -238,6 +252,16 @@ async function startTextractJob(
   key: string,
   documentId: string,
 ): Promise<StartDocumentTextDetectionResponse> {
+  // Debug: Log SNS configuration
+  logger.info(
+    {
+      snsTopicArn: CONFIG.textract.snsTopicArn,
+      roleArn: CONFIG.textract.roleArn,
+      hasSnsConfig: !!CONFIG.textract.snsTopicArn && !!CONFIG.textract.roleArn,
+    },
+    'Textract SNS configuration',
+  );
+
   const input: StartDocumentTextDetectionCommandInput = {
     DocumentLocation: {
       S3Object: {
@@ -246,13 +270,23 @@ async function startTextractJob(
       },
     },
     ClientRequestToken: documentId, // Idempotency
-    NotificationChannel: configService.textract.snsTopicArn
-      ? {
-          SNSTopicArn: configService.textract.snsTopicArn,
-          RoleArn: configService.textract.roleArn!,
-        }
-      : undefined,
+    NotificationChannel:
+      CONFIG.textract.snsTopicArn && CONFIG.textract.roleArn
+        ? {
+            SNSTopicArn: CONFIG.textract.snsTopicArn,
+            RoleArn: CONFIG.textract.roleArn,
+          }
+        : undefined,
   };
+
+  logger.info(
+    {
+      documentId,
+      hasNotificationChannel: !!input.NotificationChannel,
+      notificationChannel: input.NotificationChannel,
+    },
+    'Starting Textract job',
+  );
 
   const command = new StartDocumentTextDetectionCommand(input);
 
@@ -299,7 +333,7 @@ async function markDocumentAsFailed(documentId: string): Promise<void> {
   try {
     await dynamoClient.send(
       new PutItemCommand({
-        TableName: configService.dynamodb.metadataTable,
+        TableName: CONFIG.dynamodb.metadataTable,
         Item: marshall({
           documentId,
           status: DocumentStatus.FAILED_TEXTRACT_START,
@@ -420,10 +454,13 @@ export async function handler(event: S3Event, context: Context): Promise<void> {
 
   const requestId = context.awsRequestId;
 
-  logger.info({ requestId, recordCount: event.Records.length }, 'Processing S3 event');
+  logger.info(
+    { requestId, recordCount: event.Records?.length || 0 },
+    'Processing S3 event',
+  );
 
   // Warn if SNS not configured
-  if (!configService.textract.snsTopicArn || !configService.textract.roleArn) {
+  if (!CONFIG.textract.snsTopicArn || !CONFIG.textract.roleArn) {
     logger.warn(
       'TEXTRACT_SNS_TOPIC_ARN or TEXTRACT_ROLE_ARN not configured. Jobs will not send notifications.',
     );
@@ -431,7 +468,7 @@ export async function handler(event: S3Event, context: Context): Promise<void> {
 
   // Process all records in parallel
   const results = await Promise.allSettled(
-    event.Records.map((record) => processRecord(record, requestId)),
+    (event.Records || []).map((record) => processRecord(record, requestId)),
   );
 
   // Log results

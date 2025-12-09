@@ -5,6 +5,7 @@ import { config } from 'dotenv';
 import { resolve } from 'path';
 import { DocIntelProApiStack } from '../lib/api-stack';
 import { DocIntelProStorageStack } from '../lib/storage-stack';
+import { MinimalStack } from '../stacks/minimal-stack';
 
 // Load environment variables from .env.development
 config({ path: resolve(__dirname, '../../.env.development') });
@@ -15,6 +16,12 @@ const env = {
   account: process.env['CDK_DEFAULT_ACCOUNT'] || process.env['AWS_ACCOUNT_ID'],
   region: process.env['CDK_DEFAULT_REGION'] || process.env['AWS_REGION'] || 'us-east-1',
 };
+
+// MINIMAL STACK (fast deploy, 2 handlers only)
+new MinimalStack(app, 'MinimalStack', {
+  env,
+  description: 'DocIntel Pro - Minimal deployment (Upload + TextractStart only)',
+});
 
 // Storage Stack (S3, DynamoDB)
 const storageStack = new DocIntelProStorageStack(app, 'DocIntelProStorageStack', {

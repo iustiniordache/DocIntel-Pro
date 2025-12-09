@@ -9,11 +9,15 @@
     "cdk": "cdk",
     "deploy": "cdk deploy --all --require-approval never",
     "deploy:api": "cdk deploy DocIntelProApiStack",
-    "destroy": "cdk destroy --all",
+    "deploy:minimal": "pnpm run build:api && cdk deploy MinimalStack --require-approval never",
+    "destroy": "cdk destroy --all --force",
+    "destroy:minimal": "cdk destroy MinimalStack --force",
     "diff": "cdk diff",
     "synth": "cdk synth",
+    "synth:minimal": "cdk synth MinimalStack",
     "typecheck": "tsc --noEmit",
-    "clean": "rm -rf cdk.out dist"
+    "clean": "rm -rf cdk.out dist",
+    "build:api": "cd ../apps/api && pnpm build"
   },
   "dependencies": {
     "@docintel/shared": "workspace:*",
