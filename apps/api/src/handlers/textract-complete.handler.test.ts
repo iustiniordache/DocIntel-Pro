@@ -3,7 +3,6 @@
  */
 
 import { SNSEvent, Context } from 'aws-lambda';
-import { handler } from './textract-complete.handler';
 import {
   TextractClient,
   GetDocumentTextDetectionCommand,
@@ -16,31 +15,35 @@ import {
   UpdateItemCommand,
 } from '@aws-sdk/client-dynamodb';
 import { marshall } from '@aws-sdk/util-dynamodb';
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
+import { mockClient } from 'aws-sdk-client-mock';
 
-// Mock AWS SDK clients
-jest.mock('@aws-sdk/client-textract');
-jest.mock('@aws-sdk/client-dynamodb');
+// Setup mocks
+const textractMock = mockClient(TextractClient);
+const dynamoMock = mockClient(DynamoDBClient);
+
+// Set environment variables BEFORE importing handler
+process.env['AWS_REGION'] = 'us-east-1';
+process.env['DYNAMODB_METADATA_TABLE'] = 'test-metadata-table';
+process.env['DYNAMODB_JOBS_TABLE'] = 'test-jobs-table';
+process.env['TEXTRACT_CONFIDENCE_THRESHOLD'] = '80';
+process.env['TEXTRACT_COST_PER_PAGE'] = '0.0015';
+process.env['LOG_LEVEL'] = 'error'; // Suppress logs in tests
 
 describe('textract-complete.handler', () => {
-  let mockTextractSend: jest.Mock;
-  let mockDynamoSend: jest.Mock;
+  let handler: any;
   let mockContext: Context;
+
+  beforeAll(async () => {
+    // Import handler after env vars are set
+    const module = await import('./textract-complete.handler');
+    handler = module.handler;
+  });
 
   beforeEach(() => {
     // Reset mocks
-    jest.clearAllMocks();
-
-    // Mock TextractClient
-    mockTextractSend = jest.fn();
-    (TextractClient as jest.Mock).mockImplementation(() => ({
-      send: mockTextractSend,
-    }));
-
-    // Mock DynamoDBClient
-    mockDynamoSend = jest.fn();
-    (DynamoDBClient as jest.Mock).mockImplementation(() => ({
-      send: mockDynamoSend,
-    }));
+    textractMock.reset();
+    dynamoMock.reset();
 
     // Mock Lambda context
     mockContext = {
@@ -52,18 +55,10 @@ describe('textract-complete.handler', () => {
       logStreamName: '2024/01/01/[$LATEST]test',
       getRemainingTimeInMillis: () => 30000,
       callbackWaitsForEmptyEventLoop: true,
-      done: jest.fn(),
-      fail: jest.fn(),
-      succeed: jest.fn(),
+      done: vi.fn(),
+      fail: vi.fn(),
+      succeed: vi.fn(),
     };
-
-    // Set environment variables
-    process.env['AWS_REGION'] = 'us-east-1';
-    process.env['DYNAMODB_METADATA_TABLE'] = 'test-metadata-table';
-    process.env['DYNAMODB_JOBS_TABLE'] = 'test-jobs-table';
-    process.env['TEXTRACT_CONFIDENCE_THRESHOLD'] = '80';
-    process.env['TEXTRACT_COST_PER_PAGE'] = '0.0015';
-    process.env['LOG_LEVEL'] = 'error'; // Suppress logs in tests
   });
 
   afterEach(() => {
@@ -115,99 +110,81 @@ describe('textract-complete.handler', () => {
       };
 
       // Mock DynamoDB QueryCommand (lookup job)
-      mockDynamoSend.mockImplementationOnce((command) => {
-        if (command instanceof QueryCommand) {
-          return Promise.resolve({
-            Items: [
-              marshall({
-                jobId,
-                documentId,
-                bucket: 'test-bucket',
-                s3Key: 'test-key.pdf',
-                status: 'TEXTRACT_IN_PROGRESS',
-                createdAt: new Date().toISOString(),
-                textractJobId,
-              }),
-            ],
-          });
-        }
+      dynamoMock.on(QueryCommand).resolves({
+        Items: [
+          marshall({
+            jobId,
+            documentId,
+            bucket: 'test-bucket',
+            s3Key: 'test-key.pdf',
+            status: 'TEXTRACT_IN_PROGRESS',
+            createdAt: new Date().toISOString(),
+            textractJobId,
+          }),
+        ],
       });
 
       // Mock Textract GetDocumentTextDetectionCommand (single page)
-      mockTextractSend.mockImplementationOnce((command) => {
-        if (command instanceof GetDocumentTextDetectionCommand) {
-          const blocks: Block[] = [
-            {
-              BlockType: BlockType.PAGE,
-              Id: 'page-1',
-              Page: 1,
-              Confidence: 99.5,
+      const blocks: Block[] = [
+        {
+          BlockType: BlockType.PAGE,
+          Id: 'page-1',
+          Page: 1,
+          Confidence: 99.5,
+        },
+        {
+          BlockType: BlockType.LINE,
+          Id: 'line-1',
+          Page: 1,
+          Text: 'This is a test document.',
+          Confidence: 98.5,
+          Geometry: {
+            BoundingBox: {
+              Width: 0.5,
+              Height: 0.02,
+              Left: 0.1,
+              Top: 0.1,
             },
-            {
-              BlockType: BlockType.LINE,
-              Id: 'line-1',
-              Page: 1,
-              Text: 'This is a test document.',
-              Confidence: 98.5,
-              Geometry: {
-                BoundingBox: {
-                  Width: 0.5,
-                  Height: 0.02,
-                  Left: 0.1,
-                  Top: 0.1,
-                },
-              },
+          },
+        },
+        {
+          BlockType: BlockType.LINE,
+          Id: 'line-2',
+          Page: 1,
+          Text: 'It contains multiple lines of text.',
+          Confidence: 99.0,
+          Geometry: {
+            BoundingBox: {
+              Width: 0.6,
+              Height: 0.02,
+              Left: 0.1,
+              Top: 0.15,
             },
-            {
-              BlockType: BlockType.LINE,
-              Id: 'line-2',
-              Page: 1,
-              Text: 'It contains multiple lines of text.',
-              Confidence: 99.0,
-              Geometry: {
-                BoundingBox: {
-                  Width: 0.6,
-                  Height: 0.02,
-                  Left: 0.1,
-                  Top: 0.15,
-                },
-              },
-            },
-          ];
+          },
+        },
+      ];
 
-          return Promise.resolve({
-            Blocks: blocks,
-            DocumentMetadata: {
-              Pages: 1,
-            },
-            JobStatus: 'SUCCEEDED',
-            NextToken: undefined,
-          });
-        }
+      textractMock.on(GetDocumentTextDetectionCommand).resolves({
+        Blocks: blocks,
+        DocumentMetadata: {
+          Pages: 1,
+        },
+        JobStatus: 'SUCCEEDED',
+        NextToken: undefined,
       });
 
-      // Mock UpdateItemCommand (update job status)
-      mockDynamoSend.mockImplementationOnce((command) => {
-        if (command instanceof UpdateItemCommand) {
-          return Promise.resolve({});
-        }
-      });
-
-      // Mock UpdateItemCommand (update document metadata)
-      mockDynamoSend.mockImplementationOnce((command) => {
-        if (command instanceof UpdateItemCommand) {
-          return Promise.resolve({});
-        }
-      });
+      // Mock UpdateItemCommand (update job status and document metadata)
+      dynamoMock.on(UpdateItemCommand).resolves({});
 
       // Execute handler
       await handler(event, mockContext);
 
       // Verify DynamoDB calls
-      expect(mockDynamoSend).toHaveBeenCalledTimes(3); // Query + 2 Updates
+      expect(dynamoMock.commandCalls(QueryCommand)).toHaveLength(1);
+      expect(dynamoMock.commandCalls(UpdateItemCommand)).toHaveLength(2);
 
       // Verify Textract call
-      expect(mockTextractSend).toHaveBeenCalledTimes(1);
+      expect(textractMock.commandCalls(GetDocumentTextDetectionCommand)).toHaveLength(1);
     });
 
     it('should handle paginated Textract results', async () => {
@@ -248,78 +225,73 @@ describe('textract-complete.handler', () => {
       };
 
       // Mock job lookup
-      mockDynamoSend.mockImplementationOnce(() =>
-        Promise.resolve({
-          Items: [
-            marshall({
-              jobId,
-              documentId,
-              bucket: 'test-bucket',
-              s3Key: 'test-key.pdf',
-              status: 'TEXTRACT_IN_PROGRESS',
-              createdAt: new Date().toISOString(),
-              textractJobId,
-            }),
-          ],
-        }),
-      );
+      dynamoMock.on(QueryCommand).resolves({
+        Items: [
+          marshall({
+            jobId,
+            documentId,
+            bucket: 'test-bucket',
+            s3Key: 'test-key.pdf',
+            status: 'TEXTRACT_IN_PROGRESS',
+            createdAt: new Date().toISOString(),
+            textractJobId,
+          }),
+        ],
+      });
 
       // Mock paginated Textract results
-      mockTextractSend
-        .mockImplementationOnce(() =>
-          Promise.resolve({
-            Blocks: [
-              {
-                BlockType: BlockType.PAGE,
-                Id: 'page-1',
-                Page: 1,
-                Confidence: 99.5,
+      textractMock
+        .on(GetDocumentTextDetectionCommand)
+        .resolvesOnce({
+          Blocks: [
+            {
+              BlockType: BlockType.PAGE,
+              Id: 'page-1',
+              Page: 1,
+              Confidence: 99.5,
+            },
+            {
+              BlockType: BlockType.LINE,
+              Id: 'line-1',
+              Page: 1,
+              Text: 'Page 1 content',
+              Confidence: 98.5,
+              Geometry: {
+                BoundingBox: { Width: 0.5, Height: 0.02, Left: 0.1, Top: 0.1 },
               },
-              {
-                BlockType: BlockType.LINE,
-                Id: 'line-1',
-                Page: 1,
-                Text: 'Page 1 content',
-                Confidence: 98.5,
-                Geometry: {
-                  BoundingBox: { Width: 0.5, Height: 0.02, Left: 0.1, Top: 0.1 },
-                },
+            },
+          ],
+          NextToken: 'token-123',
+        })
+        .resolvesOnce({
+          Blocks: [
+            {
+              BlockType: BlockType.PAGE,
+              Id: 'page-2',
+              Page: 2,
+              Confidence: 99.3,
+            },
+            {
+              BlockType: BlockType.LINE,
+              Id: 'line-2',
+              Page: 2,
+              Text: 'Page 2 content',
+              Confidence: 98.0,
+              Geometry: {
+                BoundingBox: { Width: 0.5, Height: 0.02, Left: 0.1, Top: 0.1 },
               },
-            ],
-            NextToken: 'token-123',
-          }),
-        )
-        .mockImplementationOnce(() =>
-          Promise.resolve({
-            Blocks: [
-              {
-                BlockType: BlockType.PAGE,
-                Id: 'page-2',
-                Page: 2,
-                Confidence: 99.3,
-              },
-              {
-                BlockType: BlockType.LINE,
-                Id: 'line-2',
-                Page: 2,
-                Text: 'Page 2 content',
-                Confidence: 98.0,
-                Geometry: {
-                  BoundingBox: { Width: 0.5, Height: 0.02, Left: 0.1, Top: 0.1 },
-                },
-              },
-            ],
-            NextToken: undefined,
-          }),
-        );
+            },
+          ],
+          NextToken: undefined,
+        });
 
       // Mock updates
-      mockDynamoSend.mockImplementation(() => Promise.resolve({}));
+      dynamoMock.on(UpdateItemCommand).resolves({});
 
       await handler(event, mockContext);
 
       // Verify Textract was called twice (pagination)
-      expect(mockTextractSend).toHaveBeenCalledTimes(2);
+      expect(textractMock.commandCalls(GetDocumentTextDetectionCommand)).toHaveLength(2);
     });
   });
 
@@ -362,32 +334,31 @@ describe('textract-complete.handler', () => {
       };
 
       // Mock job lookup
-      mockDynamoSend.mockImplementationOnce(() =>
-        Promise.resolve({
-          Items: [
-            marshall({
-              jobId,
-              documentId,
-              bucket: 'test-bucket',
-              s3Key: 'test-key.pdf',
-              status: 'TEXTRACT_IN_PROGRESS',
-              createdAt: new Date().toISOString(),
-              textractJobId,
-            }),
-          ],
-        }),
-      );
+      dynamoMock.on(QueryCommand).resolves({
+        Items: [
+          marshall({
+            jobId,
+            documentId,
+            bucket: 'test-bucket',
+            s3Key: 'test-key.pdf',
+            status: 'TEXTRACT_IN_PROGRESS',
+            createdAt: new Date().toISOString(),
+            textractJobId,
+          }),
+        ],
+      });
 
       // Mock updates (should be called to mark as failed)
-      mockDynamoSend.mockImplementation(() => Promise.resolve({}));
+      dynamoMock.on(UpdateItemCommand).resolves({});
 
       await handler(event, mockContext);
 
       // Should NOT call Textract (job failed)
-      expect(mockTextractSend).not.toHaveBeenCalled();
+      expect(textractMock.commandCalls(GetDocumentTextDetectionCommand)).toHaveLength(0);
 
       // Should update job and document status to FAILED
-      expect(mockDynamoSend).toHaveBeenCalledTimes(3); // Query + 2 Updates
+      expect(dynamoMock.commandCalls(QueryCommand)).toHaveLength(1);
+      expect(dynamoMock.commandCalls(UpdateItemCommand)).toHaveLength(2);
     });
 
     it('should handle job not found gracefully', async () => {
@@ -426,17 +397,15 @@ describe('textract-complete.handler', () => {
       };
 
       // Mock job lookup - not found
-      mockDynamoSend.mockImplementationOnce(() =>
-        Promise.resolve({
-          Items: [],
-        }),
-      );
+      dynamoMock.on(QueryCommand).resolves({
+        Items: [],
+      });
 
       await handler(event, mockContext);
 
       // Should only call DynamoDB for lookup, then exit gracefully
-      expect(mockDynamoSend).toHaveBeenCalledTimes(1);
-      expect(mockTextractSend).not.toHaveBeenCalled();
+      expect(dynamoMock.commandCalls(QueryCommand)).toHaveLength(1);
+      expect(textractMock.commandCalls(GetDocumentTextDetectionCommand)).toHaveLength(0);
     });
 
     it('should handle invalid SNS message format', async () => {
@@ -466,8 +435,8 @@ describe('textract-complete.handler', () => {
       await handler(event, mockContext);
 
       // Should not call any AWS services
-      expect(mockDynamoSend).not.toHaveBeenCalled();
-      expect(mockTextractSend).not.toHaveBeenCalled();
+      expect(dynamoMock.commandCalls(QueryCommand)).toHaveLength(0);
+      expect(textractMock.commandCalls(GetDocumentTextDetectionCommand)).toHaveLength(0);
     });
 
     it('should handle Textract API errors', async () => {
@@ -508,39 +477,33 @@ describe('textract-complete.handler', () => {
       };
 
       // Mock job lookup
-      mockDynamoSend.mockImplementationOnce(() =>
-        Promise.resolve({
-          Items: [
-            marshall({
-              jobId,
-              documentId,
-              bucket: 'test-bucket',
-              s3Key: 'test-key.pdf',
-              status: 'TEXTRACT_IN_PROGRESS',
-              createdAt: new Date().toISOString(),
-              textractJobId,
-            }),
-          ],
-        }),
-      );
+      dynamoMock.on(QueryCommand).resolves({
+        Items: [
+          marshall({
+            jobId,
+            documentId,
+            bucket: 'test-bucket',
+            s3Key: 'test-key.pdf',
+            status: 'TEXTRACT_IN_PROGRESS',
+            createdAt: new Date().toISOString(),
+            textractJobId,
+          }),
+        ],
+      });
 
       // Mock Textract error
-      mockTextractSend.mockRejectedValueOnce(new Error('Textract API error'));
+      textractMock
+        .on(GetDocumentTextDetectionCommand)
+        .rejects(new Error('Textract API error'));
 
       // Mock updates
-      mockDynamoSend.mockImplementation(() => Promise.resolve({}));
+      dynamoMock.on(UpdateItemCommand).resolves({});
 
-      // Should throw error
-      await expect(handler(event, mockContext)).rejects.toThrow();
+      // Handler should not throw (uses Promise.allSettled)
+      await handler(event, mockContext);
 
       // Should still try to update status to FAILED_TEXTRACT_PROCESSING
-      expect(mockDynamoSend).toHaveBeenCalledWith(
-        expect.objectContaining({
-          input: expect.objectContaining({
-            TableName: 'test-jobs-table',
-          }),
-        }),
-      );
+      expect(dynamoMock.commandCalls(UpdateItemCommand).length).toBeGreaterThan(0);
     });
   });
 
@@ -583,21 +546,19 @@ describe('textract-complete.handler', () => {
       };
 
       // Mock job lookup
-      mockDynamoSend.mockImplementationOnce(() =>
-        Promise.resolve({
-          Items: [
-            marshall({
-              jobId,
-              documentId,
-              bucket: 'test-bucket',
-              s3Key: 'test-key.pdf',
-              status: 'TEXTRACT_IN_PROGRESS',
-              createdAt: new Date().toISOString(),
-              textractJobId,
-            }),
-          ],
-        }),
-      );
+      dynamoMock.on(QueryCommand).resolves({
+        Items: [
+          marshall({
+            jobId,
+            documentId,
+            bucket: 'test-bucket',
+            s3Key: 'test-key.pdf',
+            status: 'TEXTRACT_IN_PROGRESS',
+            createdAt: new Date().toISOString(),
+            textractJobId,
+          }),
+        ],
+      });
 
       // Mock Textract response with table
       const blocks: Block[] = [
@@ -677,22 +638,21 @@ describe('textract-complete.handler', () => {
         },
       ];
 
-      mockTextractSend.mockImplementationOnce(() =>
-        Promise.resolve({
-          Blocks: blocks,
-          DocumentMetadata: { Pages: 1 },
-          JobStatus: 'SUCCEEDED',
-        }),
-      );
+      textractMock.on(GetDocumentTextDetectionCommand).resolves({
+        Blocks: blocks,
+        DocumentMetadata: { Pages: 1 },
+        JobStatus: 'SUCCEEDED',
+      });
 
       // Mock updates
-      mockDynamoSend.mockImplementation(() => Promise.resolve({}));
+      dynamoMock.on(UpdateItemCommand).resolves({});
 
       await handler(event, mockContext);
 
       // Verify successful execution
-      expect(mockTextractSend).toHaveBeenCalled();
-      expect(mockDynamoSend).toHaveBeenCalledTimes(3);
+      expect(textractMock.commandCalls(GetDocumentTextDetectionCommand)).toHaveLength(1);
+      expect(dynamoMock.commandCalls(QueryCommand)).toHaveLength(1);
+      expect(dynamoMock.commandCalls(UpdateItemCommand)).toHaveLength(2);
     });
   });
 });

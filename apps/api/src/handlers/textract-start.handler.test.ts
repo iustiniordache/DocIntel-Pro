@@ -46,22 +46,25 @@ vi.mock('@nestjs/core', () => ({
 }));
 
 // Setup mocks
+// Set environment variables BEFORE importing handler (CONFIG is initialized on import)
+process.env['AWS_REGION'] = 'us-east-1';
+process.env['DYNAMODB_METADATA_TABLE'] = 'DocIntel-DocumentMetadata';
+process.env['DYNAMODB_JOBS_TABLE'] = 'DocIntel-ProcessingJobs';
+process.env['TEXTRACT_SNS_TOPIC_ARN'] = 'arn:aws:sns:us-east-1:123456789:test-topic';
+process.env['TEXTRACT_ROLE_ARN'] = 'arn:aws:iam::123456789:role/test-role';
+process.env['LOG_LEVEL'] = 'silent';
+
 const s3Mock = mockClient(S3Client);
 const textractMock = mockClient(TextractClient);
 const dynamoMock = mockClient(DynamoDBClient);
 
-// Import handler after setting up mocks
-import { handler } from './textract-start.handler';
-
 describe('Textract Start Handler', () => {
-  beforeAll(() => {
-    // Set environment variables before tests run
-    process.env['AWS_REGION'] = 'us-east-1';
-    process.env['DYNAMODB_METADATA_TABLE'] = 'DocIntel-DocumentMetadata';
-    process.env['DYNAMODB_JOBS_TABLE'] = 'DocIntel-ProcessingJobs';
-    process.env['TEXTRACT_SNS_TOPIC_ARN'] = 'arn:aws:sns:us-east-1:123456789:test-topic';
-    process.env['TEXTRACT_ROLE_ARN'] = 'arn:aws:iam::123456789:role/test-role';
-    process.env['LOG_LEVEL'] = 'silent';
+  let handler: any;
+
+  beforeAll(async () => {
+    // Import handler after env vars are set and mocks are ready
+    const module = await import('./textract-start.handler');
+    handler = module.handler;
   });
 
   beforeEach(() => {
