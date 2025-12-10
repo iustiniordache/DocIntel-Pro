@@ -42,6 +42,7 @@
     "@types/mime-types": "^2.1.4",
     "@types/node": "^22.10.2",
     "aws-cdk": "^2.174.2",
+    "esbuild": "^0.24.0",
     "typescript": "^5.7.2"
   }
 }
