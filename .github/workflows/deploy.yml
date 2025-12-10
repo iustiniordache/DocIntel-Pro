@@ -170,54 +170,9 @@ jobs:
           fi
 
   # ===========================================================================
-  # Job 3: Web Tests
+  # Job 3: Web Tests - SKIPPED (no tests in web folder)
   # ===========================================================================
-  test-web:
-    name: Test Web
-    runs-on: ubuntu-latest
-    if: github.event.inputs.skip_tests != 'true'
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v3
-        with:
-          version: ${{ env.PNPM_VERSION }}
-
-      - name: Get pnpm store directory
-        shell: bash
-        run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
-
-      - name: Setup pnpm cache
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.STORE_PATH }}
-          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-store-
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Run Web tests
-        run: |
-          cd apps/web
-          pnpm test:coverage
-
-      - name: Upload Web coverage reports
-        uses: codecov/codecov-action@v4
-        with:
-          files: ./apps/web/coverage/lcov.info
-          flags: web
-          name: web-coverage
-          fail_ci_if_error: false
+  # All tests are located in apps/api folder
 
   # ===========================================================================
   # Job 4: Integration Tests
@@ -318,7 +273,7 @@ jobs:
   # ===========================================================================
   build-web:
     name: Build Web
-    needs: [lint, test-web]
+    needs: [lint]
     runs-on: ubuntu-latest
 
     steps:
@@ -659,7 +614,6 @@ jobs:
       [
         lint,
         test-api,
-        test-web,
         test-integration,
         build-api,
         build-web,
