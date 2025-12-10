@@ -11,7 +11,7 @@ import appConfig from '../config/app.config';
  * Create a test module with mocked config values
  */
 export async function createTestConfigModule(
-  overrides: Partial<Record<string, any>> = {},
+  overrides: Partial<Record<string, unknown>> = {},
 ): Promise<TestingModule> {
   // Set test environment variables
   process.env['AWS_REGION'] = overrides['AWS_REGION'] || 'us-east-1';
@@ -45,7 +45,7 @@ export async function createTestConfigModule(
 /**
  * Get mocked config service for testing
  */
-export function getMockConfigService(overrides: Partial<any> = {}) {
+export function getMockConfigService(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     aws: {
       region: overrides['aws']?.['region'] || 'us-east-1',

@@ -27,7 +27,7 @@ export interface Chunk {
     position?: number;
     source?: string;
     timestamp?: string;
-    [key: string]: any;
+    [key: string]: unknown;
   };
 }
 
@@ -39,7 +39,7 @@ export interface SearchResult {
   documentId: string;
   content: string;
   similarity_score: number;
-  metadata: Record<string, any>;
+  metadata: Record<string, unknown>;
 }
 
 /**
@@ -147,7 +147,7 @@ export class VectorStoreService implements OnModuleInit {
         return;
       }
 
-      // Create index with knn_vector mapping
+      // Create index with knn_vector mapping (1024 dimensions for Titan V2)
       await client.indices.create({
         index: indexName,
         body: {
@@ -166,7 +166,7 @@ export class VectorStoreService implements OnModuleInit {
               },
               embedding: {
                 type: 'knn_vector',
-                dimension: this.config.dimensions,
+                dimension: 1024, // CRITICAL: Must match Titan V2 embedding dimensions
                 method: {
                   name: 'hnsw',
                   space_type: 'cosinesimil',
@@ -229,7 +229,17 @@ export class VectorStoreService implements OnModuleInit {
       const indexName = this.config.indexName;
 
       // Build bulk operations
-      const body: any[] = [];
+      const body: Array<
+        | { index: { _index: string; _id: string } }
+        | {
+            chunkId: string;
+            documentId: string;
+            content: string;
+            embedding: number[];
+            metadata: Record<string, unknown>;
+            timestamp: string;
+          }
+      > = [];
       for (const chunk of chunks) {
         // Index operation
         body.push({
@@ -328,7 +338,7 @@ export class VectorStoreService implements OnModuleInit {
       this.logger.log({
         msg: 'Deleted chunks by document ID',
         documentId,
-        deleted: (response.body as any).deleted || 0,
+        deleted: (response.body as { deleted?: number }).deleted || 0,
       });
     } catch (error) {
       this.logger.error({
@@ -346,7 +356,7 @@ export class VectorStoreService implements OnModuleInit {
    */
   async hybridSearch(
     queryVector: number[],
-    queryText: string,
+    _queryText: string, // Keep for API compatibility but not used in k-NN query
     k: number = 5,
   ): Promise<SearchResult[]> {
     try {
@@ -354,31 +364,23 @@ export class VectorStoreService implements OnModuleInit {
       const client = await this.getClient();
       const indexName = this.config.indexName;
 
+      // Use OpenSearch k-NN plugin search format
       const response = await client.search({
         index: indexName,
         body: {
           size: k,
           query: {
             bool: {
-              should: [
+              must: [
                 {
                   knn: {
                     embedding: {
                       vector: queryVector,
-                      k,
+                      k: k,
                     },
                   },
                 },
-                {
-                  multi_match: {
-                    query: queryText,
-                    fields: ['content^2', 'metadata.*'],
-                    type: 'best_fields',
-                    operator: 'or',
-                  },
-                },
               ],
-              minimum_should_match: 1,
             },
           },
           _source: ['chunkId', 'documentId', 'content', 'metadata'],
@@ -386,13 +388,23 @@ export class VectorStoreService implements OnModuleInit {
       });
 
       const hits = response.body.hits?.hits || [];
-      const results: SearchResult[] = hits.map((hit: any) => ({
-        chunkId: hit._source.chunkId,
-        documentId: hit._source.documentId,
-        content: hit._source.content,
-        similarity_score: hit._score || 0,
-        metadata: hit._source.metadata || {},
-      }));
+      const results: SearchResult[] = hits.map(
+        (hit: {
+          _source: {
+            chunkId: string;
+            documentId: string;
+            content: string;
+            metadata?: Record<string, unknown>;
+          };
+          _score?: number;
+        }) => ({
+          chunkId: hit._source.chunkId,
+          documentId: hit._source.documentId,
+          content: hit._source.content,
+          similarity_score: hit._score || 0,
+          metadata: hit._source.metadata || {},
+        }),
+      );
 
       this.logger.log({
         msg: 'Hybrid search completed',
@@ -439,13 +451,23 @@ export class VectorStoreService implements OnModuleInit {
       });
 
       const hits = response.body.hits?.hits || [];
-      const results: SearchResult[] = hits.map((hit: any) => ({
-        chunkId: hit._source.chunkId,
-        documentId: hit._source.documentId,
-        content: hit._source.content,
-        similarity_score: hit._score || 0,
-        metadata: hit._source.metadata || {},
-      }));
+      const results: SearchResult[] = hits.map(
+        (hit: {
+          _source: {
+            chunkId: string;
+            documentId: string;
+            content: string;
+            metadata?: Record<string, unknown>;
+          };
+          _score?: number;
+        }) => ({
+          chunkId: hit._source.chunkId,
+          documentId: hit._source.documentId,
+          content: hit._source.content,
+          similarity_score: hit._score || 0,
+          metadata: hit._source.metadata || {},
+        }),
+      );
 
       this.logger.log({
         msg: 'Vector search completed',

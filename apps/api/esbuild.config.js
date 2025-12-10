@@ -28,9 +28,12 @@ console.log('✅ Lambda bundle created: ./build/lambda.js');
 // Build individual handler bundles for CDK deployment
 await esbuild.build({
   entryPoints: {
-    'upload': './src/handlers/upload.handler.ts',
+    upload: './src/handlers/upload.handler.ts',
     'textract-start': './src/handlers/textract-start.handler.ts',
     'textract-complete': './src/handlers/textract-complete.handler.ts',
+    query: './src/handlers/query.handler.ts',
+    documents: './src/handlers/documents.handler.ts',
+    index: './src/handlers/index.handler.ts',
   },
   bundle: true,
   platform: 'node',

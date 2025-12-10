@@ -47,7 +47,7 @@ export interface EmbeddingBatchResult {
 
 /**
  * Service for generating text embeddings using AWS Bedrock
- * Supports Amazon Titan Embeddings V2 model
+ * Supports Amazon Titan Embeddings V1 model
  */
 @Injectable()
 export class EmbeddingService {
@@ -84,7 +84,7 @@ export class EmbeddingService {
   /**
    * Generate embedding for a single text
    * @param text Input text to embed
-   * @returns 1024-dimensional embedding vector
+   * @returns 1024-dimensional embedding vector (Titan V2)
    */
   async embedText(text: string): Promise<number[]> {
     if (!text || text.trim().length === 0) {

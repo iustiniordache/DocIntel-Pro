@@ -28,7 +28,14 @@ import {
   QueryCommandInput,
   UpdateItemCommandInput,
 } from '@aws-sdk/client-dynamodb';
-import { marshall, unmarshall } from '@aws-sdk/util-dynamodb';
+import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import {
+  BedrockRuntimeClient,
+  InvokeModelCommand,
+} from '@aws-sdk/client-bedrock-runtime';
+import { Client } from '@opensearch-project/opensearch';
+import { AwsSigv4Signer } from '@opensearch-project/opensearch/aws';
+import { marshall, unmarshall, AttributeValue } from '@aws-sdk/util-dynamodb';
 import pino from 'pino';
 
 // Types
@@ -105,15 +112,29 @@ const JobStatus = {
 // Configuration from environment variables
 const CONFIG = {
   aws: {
-    region: process.env['AWS_REGION'] || 'us-east-1',
+    region: process.env['AWS_REGION'] || process.env['AWS_DEFAULT_REGION'] || 'us-east-1',
   },
   dynamodb: {
     metadataTable: process.env['DYNAMODB_METADATA_TABLE'] || '',
     jobsTable: process.env['DYNAMODB_JOBS_TABLE'] || '',
   },
+  s3: {
+    documentsBucket: process.env['S3_DOCUMENTS_BUCKET'] || '',
+  },
+  opensearch: {
+    domain: process.env['OPENSEARCH_DOMAIN'] || '',
+    indexName: process.env['OPENSEARCH_INDEX_NAME'] || 'docintel-vectors',
+  },
+  bedrock: {
+    embeddingModel: 'amazon.titan-embed-text-v2:0',
+  },
   textract: {
     confidenceThreshold: parseFloat(process.env['TEXTRACT_CONFIDENCE_THRESHOLD'] || '80'),
     costPerPage: parseFloat(process.env['TEXTRACT_COST_PER_PAGE'] || '0.0015'),
+  },
+  chunking: {
+    chunkSize: 1000,
+    overlap: 100,
   },
   logging: {
     level: process.env['LOG_LEVEL'] || 'info',
@@ -123,6 +144,9 @@ const CONFIG = {
 // Lazy initialization of AWS clients
 let textractClient: TextractClient;
 let dynamoClient: DynamoDBClient;
+let s3Client: S3Client;
+let bedrockClient: BedrockRuntimeClient;
+let osClient: Client;
 let logger: pino.Logger;
 
 async function initializeServices() {
@@ -135,6 +159,18 @@ async function initializeServices() {
       region: CONFIG.aws.region,
     });
 
+    s3Client = new S3Client({ region: CONFIG.aws.region });
+
+    bedrockClient = new BedrockRuntimeClient({ region: CONFIG.aws.region });
+
+    osClient = new Client({
+      ...AwsSigv4Signer({
+        region: CONFIG.aws.region,
+        service: 'es',
+      }),
+      node: CONFIG.opensearch.domain,
+    });
+
     logger = pino({
       level: CONFIG.logging.level,
       formatters: {
@@ -143,6 +179,85 @@ async function initializeServices() {
     });
 
     logger.info('Services initialized');
+  }
+}
+
+/**
+ * Chunk text with overlap
+ */
+function chunkText(
+  text: string,
+  pageNumber: number,
+): Array<{ text: string; pageNumber: number }> {
+  const chunks: Array<{ text: string; pageNumber: number }> = [];
+  const { chunkSize, overlap } = CONFIG.chunking;
+
+  for (let i = 0; i < text.length; i += chunkSize - overlap) {
+    const chunk = text.slice(i, i + chunkSize);
+    if (chunk.trim().length > 0) {
+      chunks.push({ text: chunk.trim(), pageNumber });
+    }
+  }
+
+  return chunks;
+}
+
+/**
+ * Generate embedding using Bedrock Titan
+ */
+async function generateEmbedding(text: string): Promise<number[]> {
+  const response = await bedrockClient.send(
+    new InvokeModelCommand({
+      modelId: CONFIG.bedrock.embeddingModel,
+      body: JSON.stringify({ inputText: text }),
+    }),
+  );
+
+  const result = JSON.parse(new TextDecoder().decode(response.body));
+  return result.embedding;
+}
+
+/**
+ * Index chunks into OpenSearch
+ */
+async function indexChunks(
+  documentId: string,
+  filename: string,
+  chunks: Array<{ text: string; pageNumber: number }>,
+): Promise<void> {
+  logger.info(
+    { documentId, chunkCount: chunks.length },
+    'Indexing chunks into OpenSearch',
+  );
+
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    if (!chunk) continue;
+
+    const chunkId = `${documentId}-chunk-${i}`;
+
+    logger.info(
+      { chunkId, chunkIndex: i, totalChunks: chunks.length },
+      'Generating embedding',
+    );
+    const embedding = await generateEmbedding(chunk.text);
+
+    await osClient.index({
+      index: CONFIG.opensearch.indexName,
+      id: chunkId,
+      body: {
+        documentId,
+        filename,
+        chunkId,
+        chunkIndex: i,
+        content: chunk.text,
+        embedding,
+        pageNumber: chunk.pageNumber,
+        createdAt: new Date().toISOString(),
+      },
+    });
+
+    logger.info({ chunkId }, 'Chunk indexed successfully');
   }
 }
 
@@ -189,7 +304,12 @@ async function lookupJobByTextractId(
       return null;
     }
 
-    const job = unmarshall(result.Items[0]!) as ProcessingJob;
+    const firstItem = result.Items[0];
+    if (!firstItem) {
+      throw new Error('Job not found in DynamoDB');
+    }
+
+    const job = unmarshall(firstItem) as ProcessingJob;
     logger.info({ jobId: job.jobId, documentId: job.documentId }, 'Job found');
 
     return job;
@@ -263,7 +383,10 @@ function parseTextractBlocks(blocks: Block[]): ParsedDocument {
       if (!pageMap.has(block.Page)) {
         pageMap.set(block.Page, []);
       }
-      pageMap.get(block.Page)!.push(block);
+      const pageBlocks = pageMap.get(block.Page);
+      if (pageBlocks) {
+        pageBlocks.push(block);
+      }
     }
   }
 
@@ -361,7 +484,10 @@ function convertTableToMarkdown(tableBlock: Block, allBlocks: Block[]): string |
     if (!rows.has(rowIndex)) {
       rows.set(rowIndex, []);
     }
-    rows.get(rowIndex)!.push(cell);
+    const row = rows.get(rowIndex);
+    if (row) {
+      row.push(cell);
+    }
   }
 
   // Sort rows and cells
@@ -466,9 +592,9 @@ async function updateJobStatus(
       ? 'SET #status = :status, completedAt = :completedAt, pageCount = :pageCount'
       : 'SET #status = :status, completedAt = :completedAt';
 
-    const expressionValues: Record<string, any> = {
-      ':status': status,
-      ':completedAt': new Date().toISOString(),
+    const expressionValues: Record<string, AttributeValue> = {
+      ':status': { S: status },
+      ':completedAt': { S: new Date().toISOString() },
     };
 
     if (pageCount) {
@@ -631,7 +757,45 @@ async function processRecord(record: SNSEventRecord, requestId: string): Promise
       'Textract results parsed',
     );
 
-    // Process for embeddings
+    // Store Textract results to S3 for reference
+    try {
+      await s3Client.send(
+        new PutObjectCommand({
+          Bucket: CONFIG.s3.documentsBucket,
+          Key: `${job.s3Key.replace('.pdf', '')}-textract.json`,
+          Body: JSON.stringify({ Blocks: blocks }),
+          ContentType: 'application/json',
+        }),
+      );
+      logger.info(
+        { documentId, s3Key: `${job.s3Key.replace('.pdf', '')}-textract.json` },
+        'Textract results stored to S3',
+      );
+    } catch (error) {
+      logger.warn({ error, documentId }, 'Failed to store Textract results to S3');
+    }
+
+    // Get filename from metadata
+    const filename = job.s3Key.split('/').pop() || 'unknown.pdf';
+
+    // Chunk text by page
+    const allChunks: Array<{ text: string; pageNumber: number }> = [];
+    for (const page of parsed.pages) {
+      const pageChunks = chunkText(page.text, page.pageNumber);
+      allChunks.push(...pageChunks);
+    }
+
+    logger.info({ documentId, chunkCount: allChunks.length }, 'Text chunked');
+
+    // Index chunks into OpenSearch
+    await indexChunks(documentId, filename, allChunks);
+
+    logger.info(
+      { documentId, chunkCount: allChunks.length },
+      'Document indexed successfully',
+    );
+
+    // Process for embeddings (legacy - can be removed if not needed)
     const embedMetrics = await processDocumentForEmbeddings(parsed, documentId, jobId);
 
     logger.info(
