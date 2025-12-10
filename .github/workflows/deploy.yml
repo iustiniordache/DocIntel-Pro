@@ -340,15 +340,20 @@ jobs:
           echo "Contents of apps/web/.next:"
           ls -la apps/web/.next
 
+      - name: Prepare artifact directory
+        run: |
+          mkdir -p .artifact-staging
+          cp -r apps/web/.next .artifact-staging/
+          ls -la .artifact-staging/.next
+
       - name: Upload Web build artifact
         uses: actions/upload-artifact@v4
         with:
           name: web-build
-          path: |
-            apps/web/.next/**/*
-            !apps/web/.next/cache
+          path: .artifact-staging/.next
           retention-days: 7
           if-no-files-found: error
+          include-hidden-files: true
 
   # ===========================================================================
   # Job 7: CDK Synthesize
