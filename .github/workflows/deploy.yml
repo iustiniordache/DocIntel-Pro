@@ -344,8 +344,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: web-build
-          path: apps/web/.next
+          path: |
+            apps/web/.next/**/*
+            !apps/web/.next/cache
           retention-days: 7
+          if-no-files-found: error
 
   # ===========================================================================
   # Job 7: CDK Synthesize
