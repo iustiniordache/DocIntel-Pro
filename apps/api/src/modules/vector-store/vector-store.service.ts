@@ -113,7 +113,12 @@ export class VectorStoreService implements OnModuleInit {
         },
         Connection: class extends Connection {
           override buildRequestObject(params: unknown) {
-            const request = super.buildRequestObject(params) as any;
+            const request = super.buildRequestObject(params) as {
+              service: string;
+              region: string;
+              headers: Record<string, string>;
+              [key: string]: unknown;
+            };
             request.service = 'es';
             request.region = region;
             request.headers = request.headers || {};
@@ -447,14 +452,14 @@ export class VectorStoreService implements OnModuleInit {
         msg: 'OpenSearch hits received',
         hitsCount: hits.length,
         totalHits: response.body.hits?.total,
-        rawHits: hits.map((h: any) => ({
+        rawHits: hits.map((h) => ({
           id: h._id,
           score: h._score,
           source: {
-            chunkId: h._source?.chunkId,
-            documentId: h._source?.documentId,
-            contentPreview: h._source?.content?.substring(0, 50),
-            metadata: h._source?.metadata,
+            chunkId: h._source?.['chunkId'],
+            documentId: h._source?.['documentId'],
+            contentPreview: h._source?.['content']?.substring(0, 50),
+            metadata: h._source?.['metadata'],
           },
         })),
       });
