@@ -9,25 +9,37 @@
     "cdk": "cdk",
     "deploy": "cdk deploy --all --require-approval never",
     "deploy:api": "cdk deploy DocIntelProApiStack",
+    "deploy:storage": "cdk deploy DocIntelProStorageStack",
+    "deploy:web": "cdk deploy DocIntelProWebStack",
     "deploy:minimal": "pnpm run build:api && cdk deploy MinimalStack --require-approval never",
     "destroy": "cdk destroy --all --force",
     "destroy:minimal": "cdk destroy MinimalStack --force",
+    "destroy:web": "cdk destroy DocIntelProWebStack --force",
     "diff": "cdk diff",
+    "diff:web": "cdk diff DocIntelProWebStack",
     "synth": "cdk synth",
     "synth:minimal": "cdk synth MinimalStack",
+    "synth:web": "cdk synth DocIntelProWebStack",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf cdk.out dist",
-    "build:api": "cd ../apps/api && pnpm build"
+    "build:api": "cd ../apps/api && pnpm build",
+    "build:web": "cd ../apps/web && pnpm build",
+    "deploy:web:content": "pnpm run build:web && node scripts/deploy-web-content.js"
   },
   "dependencies": {
+    "@aws-sdk/client-cloudformation": "^3.713.0",
+    "@aws-sdk/client-cloudfront": "^3.713.0",
+    "@aws-sdk/client-s3": "^3.713.0",
     "@docintel/shared": "workspace:*",
     "aws-cdk-lib": "^2.174.2",
     "constructs": "^10.4.2",
     "dotenv": "^16.4.7",
+    "mime-types": "^2.1.35",
     "source-map-support": "^0.5.21",
     "tslib": "^2.8.1"
   },
   "devDependencies": {
+    "@types/mime-types": "^2.1.4",
     "@types/node": "^22.10.2",
     "aws-cdk": "^2.174.2",
     "typescript": "^5.7.2"

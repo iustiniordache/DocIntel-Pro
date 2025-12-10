@@ -9,6 +9,6 @@
     "tsBuildInfoFile": "./dist/tsconfig.tsbuildinfo",
     "types": ["node"]
   },
-  "include": ["lib/**/*", "bin/**/*"],
+  "include": ["lib/**/*", "bin/**/*", "stacks/**/*"],
   "exclude": ["node_modules", "cdk.out", "dist"]
 }
