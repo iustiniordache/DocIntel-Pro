@@ -388,8 +388,8 @@ export class VectorStoreService implements OnModuleInit {
       });
 
       const hits = response.body.hits?.hits || [];
-      const results: SearchResult[] = hits.map(
-        (hit: {
+      const results: SearchResult[] = (
+        hits as unknown as Array<{
           _source: {
             chunkId: string;
             documentId: string;
@@ -397,14 +397,14 @@ export class VectorStoreService implements OnModuleInit {
             metadata?: Record<string, unknown>;
           };
           _score?: number;
-        }) => ({
-          chunkId: hit._source.chunkId,
-          documentId: hit._source.documentId,
-          content: hit._source.content,
-          similarity_score: hit._score || 0,
-          metadata: hit._source.metadata || {},
-        }),
-      );
+        }>
+      ).map((hit) => ({
+        chunkId: hit._source.chunkId,
+        documentId: hit._source.documentId,
+        content: hit._source.content,
+        similarity_score: hit._score || 0,
+        metadata: hit._source.metadata || {},
+      }));
 
       this.logger.log({
         msg: 'Hybrid search completed',
@@ -451,8 +451,8 @@ export class VectorStoreService implements OnModuleInit {
       });
 
       const hits = response.body.hits?.hits || [];
-      const results: SearchResult[] = hits.map(
-        (hit: {
+      const results: SearchResult[] = (
+        hits as unknown as Array<{
           _source: {
             chunkId: string;
             documentId: string;
@@ -460,14 +460,14 @@ export class VectorStoreService implements OnModuleInit {
             metadata?: Record<string, unknown>;
           };
           _score?: number;
-        }) => ({
-          chunkId: hit._source.chunkId,
-          documentId: hit._source.documentId,
-          content: hit._source.content,
-          similarity_score: hit._score || 0,
-          metadata: hit._source.metadata || {},
-        }),
-      );
+        }>
+      ).map((hit) => ({
+        chunkId: hit._source.chunkId,
+        documentId: hit._source.documentId,
+        content: hit._source.content,
+        similarity_score: hit._score || 0,
+        metadata: hit._source.metadata || {},
+      }));
 
       this.logger.log({
         msg: 'Vector search completed',

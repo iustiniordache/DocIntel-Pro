@@ -19,7 +19,8 @@ import {
 } from '@aws-sdk/client-bedrock-runtime';
 import { Client } from '@opensearch-project/opensearch';
 import { AwsSigv4Signer } from '@opensearch-project/opensearch/aws';
-import { unmarshall, AttributeValue } from '@aws-sdk/util-dynamodb';
+import { unmarshall } from '@aws-sdk/util-dynamodb';
+import { AttributeValue } from '@aws-sdk/client-dynamodb';
 import pino from 'pino';
 
 interface DocumentMetadata {

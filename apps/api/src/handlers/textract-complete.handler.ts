@@ -35,7 +35,8 @@ import {
 } from '@aws-sdk/client-bedrock-runtime';
 import { Client } from '@opensearch-project/opensearch';
 import { AwsSigv4Signer } from '@opensearch-project/opensearch/aws';
-import { marshall, unmarshall, AttributeValue } from '@aws-sdk/util-dynamodb';
+import { marshall, unmarshall } from '@aws-sdk/util-dynamodb';
+import { AttributeValue } from '@aws-sdk/client-dynamodb';
 import pino from 'pino';
 
 // Types
@@ -597,8 +598,8 @@ async function updateJobStatus(
       ':completedAt': { S: new Date().toISOString() },
     };
 
-    if (pageCount) {
-      expressionValues[':pageCount'] = pageCount;
+    if (pageCount !== undefined) {
+      expressionValues[':pageCount'] = { N: String(pageCount) };
     }
 
     const params: UpdateItemCommandInput = {

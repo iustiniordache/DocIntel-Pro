@@ -379,11 +379,19 @@ export async function handler(
 
     const validation = validateRequestBody(body);
     if (!validation.isValid) {
-      return errorResponse(400, validation.error || 'Invalid request', requestId);
+      return errorResponse(
+        400,
+        (validation.error || 'Invalid request') as UploadError,
+        requestId,
+      );
     }
 
     if (!validation.data) {
-      return errorResponse(400, 'Invalid request data', requestId);
+      return errorResponse(
+        400,
+        'Invalid request data' as unknown as UploadError,
+        requestId,
+      );
     }
 
     const { filename, contentType } = validation.data;
