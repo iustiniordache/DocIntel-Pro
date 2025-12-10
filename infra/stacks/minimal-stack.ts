@@ -2,6 +2,7 @@ import * as cdk from 'aws-cdk-lib';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
+import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as s3n from 'aws-cdk-lib/aws-s3-notifications';
 import * as sns from 'aws-cdk-lib/aws-sns';
@@ -598,16 +599,21 @@ export class MinimalStack extends cdk.Stack {
     // ==========================================
     // CUSTOM RESOURCE: Initialize OpenSearch Index
     // ==========================================
-    const indexInitHandler = new lambda.Function(this, 'OpenSearchIndexInitHandler', {
+    const indexInitHandler = new NodejsFunction(this, 'OpenSearchIndexInitHandler', {
       functionName: 'DocIntel-OpenSearchIndexInit',
       runtime: lambda.Runtime.NODEJS_20_X,
-      handler: 'opensearch-index-init.handler',
-      code: lambda.Code.fromAsset(path.join(__dirname, '../lib')),
+      handler: 'handler',
+      entry: path.join(__dirname, '../lib/opensearch-index-init.js'),
       memorySize: 512,
       timeout: cdk.Duration.minutes(5),
       environment: {
         INDEX_NAME: 'docintel-vectors',
         OPENSEARCH_ENDPOINT: `https://${openSearchDomain.domainEndpoint}`,
+      },
+      bundling: {
+        minify: false,
+        sourceMap: true,
+        externalModules: [],
       },
     });
 
