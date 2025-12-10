@@ -15,9 +15,9 @@ const nextConfig = {
   images: {
     unoptimized: true, // Required for static export to CloudFront
   },
-  // Optional: Enable static export
-  // output: 'export',
-  // trailingSlash: true,
+  // Enable static export for S3+CloudFront deployment
+  output: 'export',
+  trailingSlash: true,
 };
 
 export default nextConfig;
