@@ -14,6 +14,8 @@ import { Construct } from 'constructs';
 import * as path from 'path';
 
 export class MinimalStack extends cdk.Stack {
+  public readonly apiUrl: string;
+
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
@@ -641,5 +643,8 @@ export class MinimalStack extends cdk.Stack {
 
     // Ensure index is created after OpenSearch domain
     indexInitResource.node.addDependency(openSearchDomain);
+
+    // Store API URL for use in other stacks
+    this.apiUrl = api.url;
   }
 }

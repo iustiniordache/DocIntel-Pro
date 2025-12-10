@@ -5,6 +5,7 @@ import { config } from 'dotenv';
 import { resolve } from 'path';
 import { DocIntelProApiStack } from '../lib/api-stack';
 import { DocIntelProStorageStack } from '../lib/storage-stack';
+import { DocIntelProWebStack } from '../lib/web-stack';
 import { MinimalStack } from '../stacks/minimal-stack';
 
 // Load environment variables from .env.development
@@ -17,8 +18,8 @@ const env = {
   region: process.env['CDK_DEFAULT_REGION'] || process.env['AWS_REGION'] || 'us-east-1',
 };
 
-// MINIMAL STACK (fast deploy, 2 handlers only)
-new MinimalStack(app, 'MinimalStack', {
+// MINIMAL STACK (fast deploy)
+const minimalStack = new MinimalStack(app, 'MinimalStack', {
   env,
   description: 'DocIntel Pro - Minimal deployment (Upload + TextractStart only)',
   tags: {
@@ -37,6 +38,14 @@ new DocIntelProApiStack(app, 'DocIntelProApiStack', {
   env,
   description: 'DocIntel Pro - API infrastructure (Lambda, API Gateway)',
   documentsBucket: storageStack.documentsBucket,
+});
+
+// Web Stack (CloudFront, S3 for static website)
+// Pass API URL from MinimalStack for NEXT_PUBLIC_API_URL
+new DocIntelProWebStack(app, 'DocIntelProWebStack', {
+  env,
+  description: 'DocIntel Pro - Web frontend (CloudFront, S3)',
+  apiUrl: minimalStack.apiUrl,
 });
 
 app.synth();
