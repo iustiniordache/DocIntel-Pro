@@ -24,6 +24,18 @@ vi.mock('@opensearch-project/opensearch', () => ({
   },
 }));
 
+// Mock AWS credential provider
+vi.mock('@aws-sdk/credential-provider-node', () => ({
+  defaultProvider: vi.fn(
+    () => () =>
+      Promise.resolve({
+        accessKeyId: 'mock-access-key',
+        secretAccessKey: 'mock-secret-key',
+        sessionToken: 'mock-session-token',
+      }),
+  ),
+}));
+
 describe('VectorStoreService', () => {
   let service: VectorStoreService;
 
