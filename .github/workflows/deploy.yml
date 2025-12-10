@@ -306,19 +306,19 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build Web
+        working-directory: apps/web
         env:
           NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL || 'https://placeholder-api-url.com' }}
         run: |
-          cd apps/web
           echo "Building Next.js app..."
           pnpm build
           echo "Build completed. Checking output..."
           ls -la
           if [ -d ".next" ]; then
-            echo "✅ .next directory found in apps/web"
+            echo "✅ .next directory found"
             ls -la .next
           else
-            echo "❌ .next directory NOT found in apps/web"
+            echo "❌ .next directory NOT found"
             pwd
           fi
 
@@ -326,12 +326,18 @@ jobs:
         run: |
           echo "Checking from workspace root..."
           pwd
+          echo "Listing workspace root:"
+          ls -la
+          echo "Listing apps/:"
+          ls -la apps/
+          echo "Listing apps/web/:"
           ls -la apps/web/
           if [ ! -d "apps/web/.next" ]; then
             echo "❌ .next directory not found at apps/web/.next"
             exit 1
           fi
           echo "✅ Web build successful"
+          echo "Contents of apps/web/.next:"
           ls -la apps/web/.next
 
       - name: Upload Web build artifact
