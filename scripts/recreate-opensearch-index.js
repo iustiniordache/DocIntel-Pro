@@ -26,7 +26,7 @@ async function recreateIndex() {
       scroll: '1m',
     });
 
-    const documents = allDocs.body.hits.hits.map(hit => ({
+    const documents = allDocs.body.hits.hits.map((hit) => ({
       id: hit._id,
       source: hit._source,
     }));
@@ -97,7 +97,7 @@ async function recreateIndex() {
       console.log(`Re-indexed ${documents.length} documents`);
       if (bulkResponse.body.errors) {
         console.log('Some errors occurred during bulk indexing');
-        const errors = bulkResponse.body.items.filter(item => item.index?.error);
+        const errors = bulkResponse.body.items.filter((item) => item.index?.error);
         console.log('Errors:', JSON.stringify(errors, null, 2));
       }
     }
@@ -105,14 +105,16 @@ async function recreateIndex() {
     // Step 5: Verify
     console.log('\nStep 5: Verifying...');
     const mappings = await client.indices.getMapping({ index: indexName });
-    console.log('Embedding field type:', mappings.body[indexName].mappings.properties.embedding.type);
+    console.log(
+      'Embedding field type:',
+      mappings.body[indexName].mappings.properties.embedding.type,
+    );
 
     const count = await client.count({ index: indexName });
     console.log('Document count:', count.body.count);
 
     console.log('\n✅ Index recreated successfully!');
     console.log('You can now try your k-NN queries.');
-
   } catch (error) {
     console.error('Error:', error.message);
     if (error.meta?.body) {
