@@ -377,7 +377,7 @@ describe('EmbeddingService', () => {
 
       expect(loggerSpy).toHaveBeenCalledWith(
         expect.objectContaining({
-          msg: 'Embedding generated',
+          msg: 'Embedding generated successfully',
           actualTokens: 100,
           dimensions: 1024,
           latencyMs: expect.any(Number),
