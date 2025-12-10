@@ -1,0 +1,10 @@
+{
+  "name": "query-opensearch-script",
+  "version": "1.0.0",
+  "main": "query-opensearch.js",
+  "dependencies": {
+    "@aws-sdk/credential-provider-node": "^3.948.0",
+    "@opensearch-project/opensearch": "^2.13.0",
+    "aws4": "^1.13.2"
+  }
+}

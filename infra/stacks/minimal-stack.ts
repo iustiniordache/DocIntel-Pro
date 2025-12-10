@@ -9,6 +9,7 @@ import * as snsSubscriptions from 'aws-cdk-lib/aws-sns-subscriptions';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as opensearch from 'aws-cdk-lib/aws-opensearchservice';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
+import * as cr from 'aws-cdk-lib/custom-resources';
 import { Construct } from 'constructs';
 import * as path from 'path';
 
@@ -429,6 +430,16 @@ export class MinimalStack extends cdk.Stack {
       }),
     );
 
+    // Add AWS Marketplace permissions for Bedrock model activation
+    // Note: AWS Marketplace actions don't support resource-level restrictions
+    queryHandlerRole.addToPolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['aws-marketplace:ViewSubscriptions', 'aws-marketplace:Subscribe'],
+        resources: ['*'],
+      }),
+    );
+
     // Add explicit access policy for the Lambda role
     openSearchDomain.addAccessPolicies(
       new iam.PolicyStatement({
@@ -581,5 +592,54 @@ export class MinimalStack extends cdk.Stack {
       description: 'OpenSearch Dashboards URL',
       exportName: 'DocIntelOpenSearchDashboard',
     });
+
+    // ==========================================
+    // CUSTOM RESOURCE: Initialize OpenSearch Index
+    // ==========================================
+    const indexInitHandler = new lambda.Function(this, 'OpenSearchIndexInitHandler', {
+      functionName: 'DocIntel-OpenSearchIndexInit',
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'opensearch-index-init.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, '../lib')),
+      memorySize: 512,
+      timeout: cdk.Duration.minutes(5),
+      environment: {
+        INDEX_NAME: 'docintel-vectors',
+        OPENSEARCH_ENDPOINT: `https://${openSearchDomain.domainEndpoint}`,
+      },
+    });
+
+    // Grant permissions to manage OpenSearch index
+    openSearchDomain.grantReadWrite(indexInitHandler);
+    indexInitHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: [
+          'es:ESHttpGet',
+          'es:ESHttpPut',
+          'es:ESHttpPost',
+          'es:ESHttpDelete',
+          'es:ESHttpHead',
+        ],
+        resources: [openSearchDomain.domainArn, `${openSearchDomain.domainArn}/*`],
+      }),
+    );
+
+    // Create custom resource provider
+    const indexInitProvider = new cr.Provider(this, 'OpenSearchIndexInitProvider', {
+      onEventHandler: indexInitHandler,
+    });
+
+    // Create custom resource (will run during deployment)
+    const indexInitResource = new cdk.CustomResource(this, 'OpenSearchIndexInit', {
+      serviceToken: indexInitProvider.serviceToken,
+      properties: {
+        IndexName: 'docintel-vectors',
+        Timestamp: Date.now(), // Force update on every deployment
+      },
+    });
+
+    // Ensure index is created after OpenSearch domain
+    indexInitResource.node.addDependency(openSearchDomain);
   }
 }

@@ -1,5 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { Client } from '@opensearch-project/opensearch';
+import { Client, Connection } from '@opensearch-project/opensearch';
+import { defaultProvider } from '@aws-sdk/credential-provider-node';
+import * as aws4 from 'aws4';
 
 /**
  * Configuration for OpenSearch vector store
@@ -98,17 +100,33 @@ export class VectorStoreService implements OnModuleInit {
     }
 
     try {
+      // Get AWS credentials for signing requests
+      const credentials = await defaultProvider()();
+      const region = process.env['AWS_REGION'] || 'us-east-1';
+      const endpoint = this.config.domain.replace('https://', '');
+
       this.client = new Client({
         node: this.config.domain,
         requestTimeout: this.config.timeout,
         ssl: {
           rejectUnauthorized: process.env['NODE_ENV'] === 'production',
         },
+        Connection: class extends Connection {
+          override buildRequestObject(params: unknown) {
+            const request = super.buildRequestObject(params) as any;
+            request.service = 'es';
+            request.region = region;
+            request.headers = request.headers || {};
+            request.headers['host'] = endpoint;
+            return aws4.sign(request, credentials);
+          }
+        },
       });
 
       this.logger.log({
-        msg: 'OpenSearch client created',
+        msg: 'OpenSearch client created with AWS auth',
         domain: this.config.domain,
+        region,
       });
 
       return this.client;
@@ -170,7 +188,7 @@ export class VectorStoreService implements OnModuleInit {
                 method: {
                   name: 'hnsw',
                   space_type: 'cosinesimil',
-                  engine: 'nmslib',
+                  engine: 'lucene',
                   parameters: {
                     ef_construction: 128,
                     m: 24,
@@ -359,35 +377,88 @@ export class VectorStoreService implements OnModuleInit {
     _queryText: string, // Keep for API compatibility but not used in k-NN query
     k: number = 5,
   ): Promise<SearchResult[]> {
+    this.logger.log({
+      msg: 'hybridSearch called',
+      vectorLength: queryVector?.length || 0,
+      vectorPreview: queryVector?.slice(0, 10) || [],
+      vectorStats: queryVector
+        ? {
+            min: Math.min(...queryVector),
+            max: Math.max(...queryVector),
+            avg: queryVector.reduce((a, b) => a + b, 0) / queryVector.length,
+          }
+        : null,
+      queryText: _queryText?.substring(0, 100) || '',
+      k,
+      indexName: this.config.indexName,
+    });
+
     try {
       await this.initializeIndex();
       const client = await this.getClient();
       const indexName = this.config.indexName;
 
+      this.logger.log({
+        msg: 'OpenSearch client ready',
+        domain: this.config.domain,
+        indexName,
+      });
+
       // Use OpenSearch k-NN plugin search format
-      const response = await client.search({
+      const searchQuery = {
         index: indexName,
         body: {
           size: k,
           query: {
-            bool: {
-              must: [
-                {
-                  knn: {
-                    embedding: {
-                      vector: queryVector,
-                      k: k,
-                    },
-                  },
-                },
-              ],
+            knn: {
+              embedding: {
+                vector: queryVector,
+                k: k,
+              },
             },
           },
           _source: ['chunkId', 'documentId', 'content', 'metadata'],
         },
+      };
+
+      this.logger.log({
+        msg: 'Sending query to OpenSearch',
+        query: JSON.stringify({
+          index: indexName,
+          size: k,
+          queryType: 'knn',
+          vectorLength: queryVector.length,
+          k,
+        }),
+      });
+
+      const response = await client.search(searchQuery);
+
+      this.logger.log({
+        msg: 'OpenSearch response received',
+        statusCode: response.statusCode,
+        hasBody: !!response.body,
+        hasHits: !!response.body?.hits,
       });
 
       const hits = response.body.hits?.hits || [];
+
+      this.logger.log({
+        msg: 'OpenSearch hits received',
+        hitsCount: hits.length,
+        totalHits: response.body.hits?.total,
+        rawHits: hits.map((h: any) => ({
+          id: h._id,
+          score: h._score,
+          source: {
+            chunkId: h._source?.chunkId,
+            documentId: h._source?.documentId,
+            contentPreview: h._source?.content?.substring(0, 50),
+            metadata: h._source?.metadata,
+          },
+        })),
+      });
+
       const results: SearchResult[] = (
         hits as unknown as Array<{
           _source: {
@@ -407,9 +478,17 @@ export class VectorStoreService implements OnModuleInit {
       }));
 
       this.logger.log({
-        msg: 'Hybrid search completed',
+        msg: 'Hybrid search completed successfully',
         resultsCount: results.length,
         k,
+        scores: results.map((r) => r.similarity_score),
+        results: results.map((r) => ({
+          chunkId: r.chunkId,
+          documentId: r.documentId,
+          score: r.similarity_score,
+          contentPreview: r.content.substring(0, 100),
+          metadata: r.metadata,
+        })),
       });
 
       return results;
@@ -417,7 +496,12 @@ export class VectorStoreService implements OnModuleInit {
       this.logger.error({
         msg: 'Hybrid search failed',
         error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        errorDetails: error,
         k,
+        vectorLength: queryVector?.length || 0,
+        indexName: this.config.indexName,
+        domain: this.config.domain,
       });
 
       // Return empty results on error instead of throwing

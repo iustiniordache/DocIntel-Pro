@@ -42,10 +42,10 @@ const CONFIG = {
   },
   search: {
     topK: 10,
-    similarityThreshold: 0.7,
+    similarityThreshold: 0.5, // Lowered from 0.7 to 0.5 for better recall
   },
   validation: {
-    maxQuestionLength: 500,
+    maxQuestionLength: 500, // Max length for questions
   },
 };
 
@@ -372,15 +372,30 @@ export async function handler(
     });
 
     // 2. Generate embedding for question
+    logger.info({
+      msg: 'Step 2: Generating embedding for question',
+      question: question.substring(0, 100),
+      requestId,
+    });
+
     const embeddingSvc = await getEmbeddingService();
     const questionEmbedding = await embeddingSvc.embedText(question);
 
-    logger.debug({
-      msg: 'Question embedding generated',
+    logger.info({
+      msg: 'Question embedding generated successfully',
       dimensions: questionEmbedding.length,
+      embeddingPreview: questionEmbedding.slice(0, 5),
+      requestId,
     });
 
     // 3. Hybrid search in vector store
+    logger.info({
+      msg: 'Step 3: Performing hybrid search in OpenSearch',
+      embeddingDimensions: questionEmbedding.length,
+      topK: CONFIG.search.topK,
+      requestId,
+    });
+
     const vectorStoreSvc = await getVectorStoreService();
     const searchResults = await vectorStoreSvc.hybridSearch(
       questionEmbedding,
@@ -391,35 +406,83 @@ export async function handler(
     logger.info({
       msg: 'Search completed',
       resultsCount: searchResults.length,
+      results: searchResults.map((r) => ({
+        chunkId: r.chunkId,
+        documentId: r.documentId,
+        similarity_score: r.similarity_score,
+        contentPreview: r.content.substring(0, 100),
+        metadata: r.metadata,
+      })),
       requestId,
     });
 
     // 4. Filter by documentId if specified
     let filteredResults = searchResults;
     if (documentId) {
+      logger.info({
+        msg: 'Step 4: Filtering by document ID',
+        documentId,
+        beforeCount: searchResults.length,
+        requestId,
+      });
+
       filteredResults = searchResults.filter((r) => r.documentId === documentId);
-      logger.debug({
+      logger.info({
         msg: 'Filtered by document ID',
         documentId,
         beforeCount: searchResults.length,
         afterCount: filteredResults.length,
+        filteredResults: filteredResults.map((r) => ({
+          chunkId: r.chunkId,
+          similarity: r.similarity_score,
+        })),
+        requestId,
+      });
+    } else {
+      logger.info({
+        msg: 'Step 4: No document ID filter applied',
+        totalResults: searchResults.length,
+        requestId,
       });
     }
 
     // 5. Filter by similarity threshold
+    logger.info({
+      msg: 'Step 5: Filtering by similarity threshold',
+      threshold: CONFIG.search.similarityThreshold,
+      beforeCount: filteredResults.length,
+      allScores: filteredResults.map((r) => r.similarity_score),
+      requestId,
+    });
+
     const relevantChunks = filteredResults.filter(
       (chunk) => chunk.similarity_score >= CONFIG.search.similarityThreshold,
     );
 
     logger.info({
-      msg: 'Filtered by similarity',
+      msg: 'Filtered by similarity threshold',
       threshold: CONFIG.search.similarityThreshold,
+      beforeCount: filteredResults.length,
       relevantCount: relevantChunks.length,
+      relevantScores: relevantChunks.map((r) => r.similarity_score),
+      droppedCount: filteredResults.length - relevantChunks.length,
+      droppedScores: filteredResults
+        .filter((r) => r.similarity_score < CONFIG.search.similarityThreshold)
+        .map((r) => r.similarity_score),
       requestId,
     });
 
     // 6. Check if we have relevant chunks
     if (relevantChunks.length === 0) {
+      logger.warn({
+        msg: 'Step 6: No relevant chunks found after filtering',
+        initialResults: searchResults.length,
+        afterDocFilter: filteredResults.length,
+        allScores: filteredResults.map((r) => r.similarity_score),
+        threshold: CONFIG.search.similarityThreshold,
+        requestId,
+      });
+
       return successResponse({
         answer:
           'I could not find any relevant documents to answer your question. Please try rephrasing your question or ensure that relevant documents have been uploaded and processed.',
@@ -428,12 +491,32 @@ export async function handler(
       });
     }
 
+    logger.info({
+      msg: 'Step 6: Relevant chunks found',
+      count: relevantChunks.length,
+      requestId,
+    });
+
     // 7. Construct prompt and generate answer
+    logger.info({
+      msg: 'Step 7: Constructing RAG prompt',
+      chunksUsed: relevantChunks.length,
+      totalContentLength: relevantChunks.reduce((sum, c) => sum + c.content.length, 0),
+      requestId,
+    });
+
     const prompt = constructPrompt(question, relevantChunks);
+
+    logger.info({
+      msg: 'Prompt constructed, calling Claude',
+      promptLength: prompt.length,
+      requestId,
+    });
+
     const answer = await generateAnswer(prompt);
 
     logger.info({
-      msg: 'Answer generated',
+      msg: 'Answer generated successfully',
       answerLength: answer.length,
       sourcesUsed: relevantChunks.length,
       requestId,

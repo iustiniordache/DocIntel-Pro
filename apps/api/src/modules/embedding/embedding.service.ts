@@ -5,6 +5,7 @@ import {
   InvokeModelCommandInput,
 } from '@aws-sdk/client-bedrock-runtime';
 import { NodeHttpHandler } from '@smithy/node-http-handler';
+import { TextDecoder } from 'util';
 
 /**
  * Configuration for the embedding service
@@ -87,17 +88,26 @@ export class EmbeddingService {
    * @returns 1024-dimensional embedding vector (Titan V2)
    */
   async embedText(text: string): Promise<number[]> {
+    this.logger.log({
+      msg: 'embedText called',
+      textLength: text?.length || 0,
+      textPreview: text?.substring(0, 100) || 'null',
+    });
+
     if (!text || text.trim().length === 0) {
+      this.logger.error('Input text is empty');
       throw new Error('Input text cannot be empty');
     }
 
     const startTime = Date.now();
     const estimatedTokens = this.estimateTokens(text);
 
-    this.logger.debug({
-      msg: 'Generating embedding',
+    this.logger.log({
+      msg: 'Generating embedding with Bedrock',
       textLength: text.length,
       estimatedTokens,
+      modelId: this.config.modelId,
+      region: this.config.region,
     });
 
     try {
@@ -105,10 +115,16 @@ export class EmbeddingService {
       const latency = Date.now() - startTime;
 
       this.logger.log({
-        msg: 'Embedding generated',
+        msg: 'Embedding generated successfully',
         actualTokens: result.inputTextTokenCount,
         estimatedTokens,
         dimensions: result.embedding.length,
+        embeddingPreview: result.embedding.slice(0, 10),
+        embeddingSample: {
+          min: Math.min(...result.embedding),
+          max: Math.max(...result.embedding),
+          avg: result.embedding.reduce((a, b) => a + b, 0) / result.embedding.length,
+        },
         latencyMs: latency,
         estimatedCost: this.calculateCost(result.inputTextTokenCount),
       });
@@ -233,6 +249,12 @@ export class EmbeddingService {
     text: string,
     attempt: number,
   ): Promise<TitanEmbeddingResponse> {
+    this.logger.debug({
+      msg: 'Invoking Bedrock',
+      attempt: attempt + 1,
+      textLength: text.length,
+    });
+
     try {
       const requestBody: TitanEmbeddingRequest = {
         inputText: text,
@@ -250,13 +272,25 @@ export class EmbeddingService {
       const command = new InvokeModelCommand(input);
       const response = await this.client.send(command);
 
+      this.logger.debug({
+        msg: 'Bedrock response received',
+        hasBody: !!response.body,
+      });
+
       if (!response.body) {
+        this.logger.error('Empty response body from Bedrock');
         throw new Error('Empty response body from Bedrock');
       }
 
       const responseBody = JSON.parse(
         new TextDecoder().decode(response.body),
       ) as TitanEmbeddingResponse;
+
+      this.logger.debug({
+        msg: 'Bedrock response parsed',
+        dimensions: responseBody.embedding?.length || 0,
+        tokens: responseBody.inputTextTokenCount,
+      });
 
       return responseBody;
     } catch (error) {

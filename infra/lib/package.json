@@ -1,0 +1,11 @@
+{
+  "name": "opensearch-index-init",
+  "version": "1.0.0",
+  "description": "Custom resource to initialize OpenSearch index with k-NN mapping",
+  "main": "opensearch-index-init.js",
+  "dependencies": {
+    "@opensearch-project/opensearch": "^2.5.0",
+    "aws4": "^1.12.0",
+    "@aws-sdk/credential-provider-node": "^3.0.0"
+  }
+}
