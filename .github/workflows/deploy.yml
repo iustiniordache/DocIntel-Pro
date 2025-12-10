@@ -307,10 +307,32 @@ jobs:
 
       - name: Build Web
         env:
-          NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL }}
+          NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL || 'https://placeholder-api-url.com' }}
         run: |
           cd apps/web
+          echo "Building Next.js app..."
           pnpm build
+          echo "Build completed. Checking output..."
+          ls -la
+          if [ -d ".next" ]; then
+            echo "✅ .next directory found in apps/web"
+            ls -la .next
+          else
+            echo "❌ .next directory NOT found in apps/web"
+            pwd
+          fi
+
+      - name: Verify build output
+        run: |
+          echo "Checking from workspace root..."
+          pwd
+          ls -la apps/web/
+          if [ ! -d "apps/web/.next" ]; then
+            echo "❌ .next directory not found at apps/web/.next"
+            exit 1
+          fi
+          echo "✅ Web build successful"
+          ls -la apps/web/.next
 
       - name: Upload Web build artifact
         uses: actions/upload-artifact@v4
@@ -386,7 +408,11 @@ jobs:
     name: Deploy to Staging
     needs: [cdk-synth, build-api, build-web]
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    if: |
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') &&
+      needs.build-api.result == 'success' &&
+      needs.build-web.result == 'success' &&
+      needs.cdk-synth.result == 'success'
     environment:
       name: staging
       url: ${{ steps.deploy.outputs.web_url }}
