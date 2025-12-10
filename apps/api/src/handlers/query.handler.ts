@@ -153,15 +153,17 @@ function validateRequest(body: unknown): {
   error?: string;
   data?: QueryRequest;
 } {
-  if (!body) {
+  if (!body || typeof body !== 'object') {
     return { valid: false, error: 'Request body is required' };
   }
 
-  if (!body.question || typeof body.question !== 'string') {
+  const bodyObj = body as Record<string, unknown>;
+
+  if (!bodyObj['question'] || typeof bodyObj['question'] !== 'string') {
     return { valid: false, error: 'Question is required and must be a string' };
   }
 
-  const question = body.question.trim();
+  const question = (bodyObj['question'] as string).trim();
 
   if (question.length === 0) {
     return { valid: false, error: 'Question cannot be empty' };
@@ -178,7 +180,7 @@ function validateRequest(body: unknown): {
     valid: true,
     data: {
       question,
-      documentId: body.documentId,
+      documentId: bodyObj['documentId'] as string | undefined,
     },
   };
 }
@@ -289,7 +291,10 @@ function formatSources(chunks: SearchResult[]): Source[] {
   return chunks.map((chunk, index) => ({
     id: `S${index + 1}`,
     similarity: Math.round(chunk.similarity_score * 100) / 100, // Round to 2 decimals
-    pageNumber: chunk.metadata['page'],
+    pageNumber:
+      chunk.metadata['page'] !== undefined && typeof chunk.metadata['page'] === 'number'
+        ? (chunk.metadata['page'] as number)
+        : undefined,
     content: chunk.content.substring(0, 200), // First 200 chars for preview
   }));
 }
