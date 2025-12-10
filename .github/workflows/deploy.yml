@@ -202,7 +202,7 @@ jobs:
       - name: Run integration tests
         run: |
           cd apps/api
-          pnpm test:integration
+          pnpm test __tests__/integration
         env:
           AWS_REGION: us-east-1
 
