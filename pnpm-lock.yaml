@@ -257,6 +257,15 @@ importers:
 
   infra:
     dependencies:
+      '@aws-sdk/client-cloudformation':
+        specifier: ^3.713.0
+        version: 3.948.0
+      '@aws-sdk/client-cloudfront':
+        specifier: ^3.713.0
+        version: 3.948.0
+      '@aws-sdk/client-s3':
+        specifier: ^3.713.0
+        version: 3.946.0
       '@docintel/shared':
         specifier: workspace:*
         version: link:../packages/shared
@@ -269,6 +278,9 @@ importers:
       dotenv:
         specifier: ^16.4.7
         version: 16.6.1
+      mime-types:
+        specifier: ^2.1.35
+        version: 2.1.35
       source-map-support:
         specifier: ^0.5.21
         version: 0.5.21
@@ -276,6 +288,9 @@ importers:
         specifier: ^2.8.1
         version: 2.8.1
     devDependencies:
+      '@types/mime-types':
+        specifier: ^2.1.4
+        version: 2.1.4
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.1
@@ -297,15 +312,6 @@ importers:
       vitest:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.19.1)(jsdom@25.0.1)(terser@5.44.1)
-
-  scripts:
-    dependencies:
-      '@aws-sdk/credential-provider-node':
-        specifier: ^3.946.0
-        version: 3.946.0
-      '@opensearch-project/opensearch':
-        specifier: ^2.13.0
-        version: 2.13.0
 
 packages:
 
@@ -376,6 +382,14 @@ packages:
 
   '@aws-sdk/client-bedrock-runtime@3.946.0':
     resolution: {integrity: sha512-ZuUBQh5VswxHp8xBUmSyn/6u/IZ/kjxC2B3kBQMoaJlEriokBvDkc6tKWEeWEM/gEwFhJxYfXgJSpAZUmsjGFQ==}
+    engines: {node: '>=18.0.0'}
+
+  '@aws-sdk/client-cloudformation@3.948.0':
+    resolution: {integrity: sha512-DIUH70KaFjOPezX2oHAC1Ky8hlUBnf0C7lB+1SBdLcjS1b/rbBTlWHmCOc0wC8cOG507gbxhwqmOX9RU/GX3+w==}
+    engines: {node: '>=18.0.0'}
+
+  '@aws-sdk/client-cloudfront@3.948.0':
+    resolution: {integrity: sha512-VwELsjwW4PEYvCIGCjH7acXyoIn6q33W3rQ0HpVR/1wdJ5NvEaiHHuxvICWxo2mBbF/QQnUmeS88aoSvys3vlA==}
     engines: {node: '>=18.0.0'}
 
   '@aws-sdk/client-dynamodb@3.946.0':
@@ -1533,10 +1547,6 @@ packages:
     engines: {node: '>=8.0.0', npm: '>=5.0.0'}
     hasBin: true
 
-  '@opensearch-project/opensearch@2.13.0':
-    resolution: {integrity: sha512-Bu3jJ7pKzumbMMeefu7/npAWAvFu5W9SlbBow1ulhluqUpqc7QoXe0KidDrMy7Dy3BQrkI6llR3cWL4lQTZOFw==}
-    engines: {node: '>=10', yarn: ^1.22.10}
-
   '@opensearch-project/opensearch@3.5.1':
     resolution: {integrity: sha512-6bf+HcuERzAtHZxrm6phjref54ABse39BpkDie/YO3AUFMCBrb3SK5okKSdT5n3+nDRuEEQLhQCl0RQV3s1qpA==}
     engines: {node: '>=14', yarn: ^1.22.10}
@@ -2306,6 +2316,9 @@ packages:
 
   '@types/json5@0.0.29':
     resolution: {integrity: sha512-dRLjCWHYg4oaA77cxO64oO+7JwCwnIzkZPdrrC71jQmQtlhM556pwKo5bUzqvZndkVbeFLIIi+9TC40JNF5hNQ==}
+
+  '@types/mime-types@2.1.4':
+    resolution: {integrity: sha512-lfU4b34HOri+kAY5UheuFMWPDOI+OPceBSHZKp69gEyTL/mmJ4cnU6Y/rlme3UL3GyOn6Y42hyIEw0/q8sWx5w==}
 
   '@types/node@22.19.1':
     resolution: {integrity: sha512-LCCV0HdSZZZb34qifBsyWlUmok6W7ouER+oQIGBScS8EsZsQbrtFTUrDX4hOl+CS6p7cnNC4td+qrSVGSCTUfQ==}
@@ -5720,6 +5733,97 @@ snapshots:
     transitivePeerDependencies:
       - aws-crt
 
+  '@aws-sdk/client-cloudformation@3.948.0':
+    dependencies:
+      '@aws-crypto/sha256-browser': 5.2.0
+      '@aws-crypto/sha256-js': 5.2.0
+      '@aws-sdk/core': 3.947.0
+      '@aws-sdk/credential-provider-node': 3.948.0
+      '@aws-sdk/middleware-host-header': 3.936.0
+      '@aws-sdk/middleware-logger': 3.936.0
+      '@aws-sdk/middleware-recursion-detection': 3.948.0
+      '@aws-sdk/middleware-user-agent': 3.947.0
+      '@aws-sdk/region-config-resolver': 3.936.0
+      '@aws-sdk/types': 3.936.0
+      '@aws-sdk/util-endpoints': 3.936.0
+      '@aws-sdk/util-user-agent-browser': 3.936.0
+      '@aws-sdk/util-user-agent-node': 3.947.0
+      '@smithy/config-resolver': 4.4.3
+      '@smithy/core': 3.18.7
+      '@smithy/fetch-http-handler': 5.3.6
+      '@smithy/hash-node': 4.2.5
+      '@smithy/invalid-dependency': 4.2.5
+      '@smithy/middleware-content-length': 4.2.5
+      '@smithy/middleware-endpoint': 4.3.14
+      '@smithy/middleware-retry': 4.4.14
+      '@smithy/middleware-serde': 4.2.6
+      '@smithy/middleware-stack': 4.2.5
+      '@smithy/node-config-provider': 4.3.5
+      '@smithy/node-http-handler': 4.4.5
+      '@smithy/protocol-http': 5.3.5
+      '@smithy/smithy-client': 4.9.10
+      '@smithy/types': 4.9.0
+      '@smithy/url-parser': 4.2.5
+      '@smithy/util-base64': 4.3.0
+      '@smithy/util-body-length-browser': 4.2.0
+      '@smithy/util-body-length-node': 4.2.1
+      '@smithy/util-defaults-mode-browser': 4.3.13
+      '@smithy/util-defaults-mode-node': 4.2.16
+      '@smithy/util-endpoints': 3.2.5
+      '@smithy/util-middleware': 4.2.5
+      '@smithy/util-retry': 4.2.5
+      '@smithy/util-utf8': 4.2.0
+      '@smithy/util-waiter': 4.2.5
+      tslib: 2.8.1
+    transitivePeerDependencies:
+      - aws-crt
+
+  '@aws-sdk/client-cloudfront@3.948.0':
+    dependencies:
+      '@aws-crypto/sha256-browser': 5.2.0
+      '@aws-crypto/sha256-js': 5.2.0
+      '@aws-sdk/core': 3.947.0
+      '@aws-sdk/credential-provider-node': 3.948.0
+      '@aws-sdk/middleware-host-header': 3.936.0
+      '@aws-sdk/middleware-logger': 3.936.0
+      '@aws-sdk/middleware-recursion-detection': 3.948.0
+      '@aws-sdk/middleware-user-agent': 3.947.0
+      '@aws-sdk/region-config-resolver': 3.936.0
+      '@aws-sdk/types': 3.936.0
+      '@aws-sdk/util-endpoints': 3.936.0
+      '@aws-sdk/util-user-agent-browser': 3.936.0
+      '@aws-sdk/util-user-agent-node': 3.947.0
+      '@smithy/config-resolver': 4.4.3
+      '@smithy/core': 3.18.7
+      '@smithy/fetch-http-handler': 5.3.6
+      '@smithy/hash-node': 4.2.5
+      '@smithy/invalid-dependency': 4.2.5
+      '@smithy/middleware-content-length': 4.2.5
+      '@smithy/middleware-endpoint': 4.3.14
+      '@smithy/middleware-retry': 4.4.14
+      '@smithy/middleware-serde': 4.2.6
+      '@smithy/middleware-stack': 4.2.5
+      '@smithy/node-config-provider': 4.3.5
+      '@smithy/node-http-handler': 4.4.5
+      '@smithy/protocol-http': 5.3.5
+      '@smithy/smithy-client': 4.9.10
+      '@smithy/types': 4.9.0
+      '@smithy/url-parser': 4.2.5
+      '@smithy/util-base64': 4.3.0
+      '@smithy/util-body-length-browser': 4.2.0
+      '@smithy/util-body-length-node': 4.2.1
+      '@smithy/util-defaults-mode-browser': 4.3.13
+      '@smithy/util-defaults-mode-node': 4.2.16
+      '@smithy/util-endpoints': 3.2.5
+      '@smithy/util-middleware': 4.2.5
+      '@smithy/util-retry': 4.2.5
+      '@smithy/util-stream': 4.5.6
+      '@smithy/util-utf8': 4.2.0
+      '@smithy/util-waiter': 4.2.5
+      tslib: 2.8.1
+    transitivePeerDependencies:
+      - aws-crt
+
   '@aws-sdk/client-dynamodb@3.946.0':
     dependencies:
       '@aws-crypto/sha256-browser': 5.2.0
@@ -7312,17 +7416,6 @@ snapshots:
     transitivePeerDependencies:
       - encoding
 
-  '@opensearch-project/opensearch@2.13.0':
-    dependencies:
-      aws4: 1.13.2
-      debug: 4.4.3
-      hpagent: 1.2.0
-      json11: 2.0.2
-      ms: 2.1.3
-      secure-json-parse: 2.7.0
-    transitivePeerDependencies:
-      - supports-color
-
   '@opensearch-project/opensearch@3.5.1':
     dependencies:
       aws4: 1.13.2
@@ -8182,6 +8275,8 @@ snapshots:
   '@types/json-schema@7.0.15': {}
 
   '@types/json5@0.0.29': {}
+
+  '@types/mime-types@2.1.4': {}
 
   '@types/node@22.19.1':
     dependencies:
