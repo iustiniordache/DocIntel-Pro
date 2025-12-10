@@ -14,6 +14,7 @@ export default [
       '**/cdk.out/**',
       '**/coverage/**',
       '**/*.config.js',
+      '**/*.backup.ts',
     ],
   },
   // Config files without type checking

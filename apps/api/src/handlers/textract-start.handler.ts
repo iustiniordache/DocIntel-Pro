@@ -396,8 +396,8 @@ async function processRecord(record: S3EventRecord, requestId: string): Promise<
     s3Key: key,
     uploadDate: now,
     status: DocumentStatus.TEXTRACT_PENDING,
-    fileSize: validation.fileSize!,
-    contentType: validation.contentType!,
+    fileSize: validation.fileSize ?? 0,
+    contentType: validation.contentType ?? 'application/octet-stream',
     createdAt: now,
   };
 

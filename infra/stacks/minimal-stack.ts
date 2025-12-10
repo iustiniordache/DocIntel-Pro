@@ -7,6 +7,8 @@ import * as s3n from 'aws-cdk-lib/aws-s3-notifications';
 import * as sns from 'aws-cdk-lib/aws-sns';
 import * as snsSubscriptions from 'aws-cdk-lib/aws-sns-subscriptions';
 import * as iam from 'aws-cdk-lib/aws-iam';
+import * as opensearch from 'aws-cdk-lib/aws-opensearchservice';
+import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import { Construct } from 'constructs';
 import * as path from 'path';
 
@@ -23,6 +25,31 @@ export class MinimalStack extends cdk.Stack {
       encryption: s3.BucketEncryption.S3_MANAGED,
       removalPolicy: cdk.RemovalPolicy.DESTROY, // Dev only
       autoDeleteObjects: true, // Dev only
+      cors: [
+        {
+          allowedMethods: [
+            s3.HttpMethods.GET,
+            s3.HttpMethods.PUT,
+            s3.HttpMethods.POST,
+            s3.HttpMethods.HEAD,
+          ],
+          allowedOrigins: [
+            'http://localhost:3000',
+            'http://localhost:3001',
+            'https://localhost:3000',
+            // Add production domain when ready
+            // 'https://your-domain.com'
+          ],
+          allowedHeaders: ['*'],
+          exposedHeaders: [
+            'ETag',
+            'x-amz-server-side-encryption',
+            'x-amz-request-id',
+            'x-amz-id-2',
+          ],
+          maxAge: 3000,
+        },
+      ],
       lifecycleRules: [
         {
           id: 'DeleteAfter7Days',
@@ -77,7 +104,71 @@ export class MinimalStack extends cdk.Stack {
     );
 
     // ==========================================
-    // 4. LAMBDA 1: UploadHandler (API Gateway)
+    // 4. OPENSEARCH DOMAIN (DEV OPTIMIZED - ~$20/month)
+    // ==========================================
+    // Production notes:
+    // - Use 3 nodes (t3.medium.search) across 3 AZs
+    // - Deploy in private subnets with NAT gateway
+    // - Enable dedicated master nodes (3x t3.small.search)
+    // - Increase EBS to 100GB+ per node
+    // - Enable fine-grained access control
+    // - Use VPC endpoints for Lambda access
+
+    const openSearchDomain = new opensearch.Domain(this, 'VectorStoreDomain', {
+      domainName: 'docintel-vectors-dev',
+      version: opensearch.EngineVersion.OPENSEARCH_2_11,
+
+      // Single node for dev (no cross-AZ replication costs)
+      capacity: {
+        dataNodes: 1,
+        dataNodeInstanceType: 't3.small.search',
+        masterNodes: 0, // Use data node as master (dev only)
+        multiAzWithStandbyEnabled: false, // Explicitly disable multi-AZ standby
+      },
+
+      // Single-AZ deployment (dev only)
+      zoneAwareness: {
+        enabled: false,
+      },
+
+      // 30GB EBS for dev (sufficient for testing)
+      ebs: {
+        volumeSize: 30,
+        volumeType: ec2.EbsDeviceVolumeType.GP3,
+      },
+
+      // Public endpoint (no VPC costs for dev)
+      // Production: use vpc with private subnets
+      enforceHttps: true,
+      nodeToNodeEncryption: true,
+      encryptionAtRest: {
+        enabled: true,
+      },
+
+      // Use resource-based access policy for dev (no fine-grained access control)
+      // Production: enable fine-grained access control with proper role mapping
+
+      // Advanced options for dev
+      advancedOptions: {
+        'indices.query.bool.max_clause_count': '1024',
+        'indices.fielddata.cache.size': '40', // 40% of heap
+      },
+
+      // Automated snapshots
+      automatedSnapshotStartHour: 2, // 2 AM UTC
+
+      // Logging (optional, can disable to save CloudWatch costs)
+      logging: {
+        slowSearchLogEnabled: true,
+        slowIndexLogEnabled: true,
+      },
+
+      // Dev only - destroy on stack delete
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    // ==========================================
+    // 5. LAMBDA 1: UploadHandler (API Gateway)
     // ==========================================
     const uploadHandler = new lambda.Function(this, 'UploadHandler', {
       functionName: 'DocIntel-UploadHandler',
@@ -168,18 +259,48 @@ export class MinimalStack extends cdk.Stack {
     // ==========================================
     // 6. LAMBDA 3: TextractCompleteHandler (SNS trigger)
     // ==========================================
+    // Create dedicated IAM role with OpenSearch permissions
+    const textractCompleteRole = new iam.Role(this, 'TextractCompleteHandlerRole', {
+      assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
+      description: 'Role for TextractCompleteHandler with OpenSearch access',
+      managedPolicies: [
+        iam.ManagedPolicy.fromAwsManagedPolicyName(
+          'service-role/AWSLambdaBasicExecutionRole',
+        ),
+      ],
+    });
+
+    // Grant OpenSearch full access to the role
+    textractCompleteRole.addToPolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: [
+          'es:ESHttpGet',
+          'es:ESHttpPost',
+          'es:ESHttpPut',
+          'es:ESHttpDelete',
+          'es:ESHttpHead',
+        ],
+        resources: [openSearchDomain.domainArn, `${openSearchDomain.domainArn}/*`],
+      }),
+    );
+
     const textractCompleteHandler = new lambda.Function(this, 'TextractCompleteHandler', {
       functionName: 'DocIntel-TextractCompleteHandler',
       runtime: lambda.Runtime.NODEJS_20_X,
       handler: 'textract-complete.handler',
       code: lambda.Code.fromAsset(path.join(__dirname, '../../apps/api/build/handlers')),
+      role: textractCompleteRole, // Use custom role with OpenSearch permissions
       memorySize: 1024, // More memory for processing large documents
       timeout: cdk.Duration.seconds(300), // 5 minutes for large documents
       environment: {
         NODE_ENV: 'production',
         AWS_ACCOUNT_ID: this.account,
+        S3_DOCUMENTS_BUCKET: documentsBucket.bucketName,
         DYNAMODB_METADATA_TABLE: metadataTable.tableName,
         DYNAMODB_JOBS_TABLE: jobsTable.tableName,
+        OPENSEARCH_DOMAIN: `https://${openSearchDomain.domainEndpoint}`,
+        OPENSEARCH_INDEX_NAME: 'docintel-vectors',
         TEXTRACT_CONFIDENCE_THRESHOLD: '80',
         TEXTRACT_COST_PER_PAGE: '0.0015',
         LOG_LEVEL: 'info',
@@ -187,6 +308,8 @@ export class MinimalStack extends cdk.Stack {
     });
 
     // Grant permissions for textract-complete handler
+    documentsBucket.grantRead(textractCompleteHandler);
+    documentsBucket.grantWrite(textractCompleteHandler); // For storing Textract results
     metadataTable.grantReadWriteData(textractCompleteHandler);
     jobsTable.grantReadWriteData(textractCompleteHandler);
 
@@ -198,19 +321,168 @@ export class MinimalStack extends cdk.Stack {
       }),
     );
 
+    // Grant OpenSearch access for indexing
+    openSearchDomain.grantReadWrite(textractCompleteHandler);
+
+    // Add explicit access policy for the Lambda role
+    openSearchDomain.addAccessPolicies(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        principals: [new iam.ArnPrincipal(textractCompleteRole.roleArn)],
+        actions: ['es:*'],
+        resources: [openSearchDomain.domainArn, `${openSearchDomain.domainArn}/*`],
+      }),
+    );
+
+    // Grant Bedrock permissions for embeddings
+    textractCompleteHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['bedrock:InvokeModel'],
+        resources: [
+          `arn:aws:bedrock:${this.region}::foundation-model/amazon.titan-embed-text-v2:0`,
+        ],
+      }),
+    );
+
     // Subscribe Lambda to SNS topic
     textractCompletionTopic.addSubscription(
       new snsSubscriptions.LambdaSubscription(textractCompleteHandler),
     );
 
     // ==========================================
-    // 7. API GATEWAY (REST)
+    // 8. LAMBDA 4: QueryHandler (API Gateway - RAG)
+    // ==========================================
+    // Create dedicated IAM role with OpenSearch permissions
+    const queryHandlerRole = new iam.Role(this, 'QueryHandlerRole', {
+      assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
+      description: 'Role for QueryHandler with OpenSearch access',
+      managedPolicies: [
+        iam.ManagedPolicy.fromAwsManagedPolicyName(
+          'service-role/AWSLambdaBasicExecutionRole',
+        ),
+      ],
+    });
+
+    // Grant OpenSearch full access to the role
+    queryHandlerRole.addToPolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: [
+          'es:ESHttpGet',
+          'es:ESHttpPost',
+          'es:ESHttpPut',
+          'es:ESHttpDelete',
+          'es:ESHttpHead',
+        ],
+        resources: [openSearchDomain.domainArn, `${openSearchDomain.domainArn}/*`],
+      }),
+    );
+
+    const queryHandler = new lambda.Function(this, 'QueryHandler', {
+      functionName: 'DocIntel-QueryHandler',
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'query.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, '../../apps/api/build/handlers')),
+      role: queryHandlerRole, // Use custom role with OpenSearch permissions
+      memorySize: 1024, // More memory for embeddings and vector search
+      timeout: cdk.Duration.seconds(60),
+      environment: {
+        NODE_ENV: 'production',
+        AWS_ACCOUNT_ID: this.account,
+        OPENSEARCH_DOMAIN: `https://${openSearchDomain.domainEndpoint}`,
+        OPENSEARCH_INDEX_NAME: 'docintel-vectors',
+        BEDROCK_LLM_MODEL_ID: 'anthropic.claude-3-haiku-20240307-v1:0',
+        LOG_LEVEL: 'info',
+      },
+    });
+
+    // ==========================================
+    // 9. LAMBDA 5: DocumentsHandler (API Gateway - List Documents)
+    // ==========================================
+    const documentsHandler = new lambda.Function(this, 'DocumentsHandler', {
+      functionName: 'DocIntel-DocumentsHandler',
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'documents.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, '../../apps/api/build/handlers')),
+      memorySize: 256,
+      timeout: cdk.Duration.seconds(10),
+      environment: {
+        NODE_ENV: 'production',
+        AWS_ACCOUNT_ID: this.account,
+        DYNAMODB_METADATA_TABLE: metadataTable.tableName,
+        LOG_LEVEL: 'info',
+      },
+    });
+
+    // Grant DynamoDB read access to Documents Handler
+    metadataTable.grantReadData(documentsHandler);
+
+    // Add Bedrock permissions to the QueryHandler role
+    queryHandlerRole.addToPolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream'],
+        resources: [
+          `arn:aws:bedrock:${this.region}::foundation-model/anthropic.claude-3-haiku-20240307-v1:0`,
+          `arn:aws:bedrock:${this.region}::foundation-model/amazon.titan-embed-text-v2:0`,
+        ],
+      }),
+    );
+
+    // Add explicit access policy for the Lambda role
+    openSearchDomain.addAccessPolicies(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        principals: [new iam.ArnPrincipal(queryHandlerRole.roleArn)],
+        actions: ['es:*'],
+        resources: [openSearchDomain.domainArn, `${openSearchDomain.domainArn}/*`],
+      }),
+    );
+
+    // Allow public HTTPS access to OpenSearch for dev/debugging (with IAM auth still required)
+    // Production: remove this and use VPC security groups
+    openSearchDomain.addAccessPolicies(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        principals: [new iam.AnyPrincipal()],
+        actions: ['es:*'],
+        resources: [`${openSearchDomain.domainArn}/*`],
+        conditions: {
+          IpAddress: {
+            'aws:SourceIp': [
+              // Add your IP address here for dev access
+              // Example: '1.2.3.4/32'
+              // Or allow all for dev (not recommended for prod)
+            ],
+          },
+        },
+      }),
+    );
+
+    // Allow Lambda execution roles to access OpenSearch
+    openSearchDomain.addAccessPolicies(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        principals: queryHandler.role ? [queryHandler.role] : [],
+        actions: ['es:*'],
+        resources: [`${openSearchDomain.domainArn}/*`],
+      }),
+    );
+
+    // ==========================================
+    // 9. API GATEWAY (REST)
     // ==========================================
     const api = new apigateway.RestApi(this, 'DocIntelApi', {
       restApiName: 'DocIntel API',
-      description: 'API for DocIntel document processing',
+      description: 'API for DocIntel document processing - v2',
       defaultCorsPreflightOptions: {
-        allowOrigins: apigateway.Cors.ALL_ORIGINS,
+        allowOrigins: [
+          'http://localhost:3000',
+          'http://localhost:3001',
+          'https://localhost:3000',
+          // Add production domain when ready
+          // 'https://your-domain.com'
+        ],
         allowMethods: apigateway.Cors.ALL_METHODS,
         allowHeaders: [
           'Content-Type',
@@ -219,11 +491,13 @@ export class MinimalStack extends cdk.Stack {
           'X-Api-Key',
           'X-Amz-Security-Token',
         ],
+        allowCredentials: true,
       },
       deployOptions: {
         stageName: 'prod',
         throttlingRateLimit: 100,
         throttlingBurstLimit: 200,
+        description: `Deployment with /documents endpoint - ${Date.now()}`,
       },
     });
 
@@ -233,8 +507,20 @@ export class MinimalStack extends cdk.Stack {
       apiKeyRequired: false,
     });
 
+    // POST /query endpoint (RAG)
+    const query = api.root.addResource('query');
+    query.addMethod('POST', new apigateway.LambdaIntegration(queryHandler), {
+      apiKeyRequired: false,
+    });
+
+    // GET /documents endpoint (list documents with status)
+    const documents = api.root.addResource('documents');
+    documents.addMethod('GET', new apigateway.LambdaIntegration(documentsHandler), {
+      apiKeyRequired: false,
+    });
+
     // ==========================================
-    // 8. OUTPUTS
+    // 10. OUTPUTS
     // ==========================================
     new cdk.CfnOutput(this, 'ApiEndpoint', {
       value: api.url,
@@ -246,6 +532,18 @@ export class MinimalStack extends cdk.Stack {
       value: `${api.url}upload`,
       description: 'Upload endpoint URL (POST)',
       exportName: 'DocIntelUploadEndpoint',
+    });
+
+    new cdk.CfnOutput(this, 'QueryEndpoint', {
+      value: `${api.url}query`,
+      description: 'Query endpoint URL (POST) - RAG question-answering',
+      exportName: 'DocIntelQueryEndpoint',
+    });
+
+    new cdk.CfnOutput(this, 'DocumentsEndpoint', {
+      value: `${api.url}documents`,
+      description: 'Documents endpoint URL (GET) - List documents with status',
+      exportName: 'DocIntelDocumentsEndpoint',
     });
 
     new cdk.CfnOutput(this, 'DocumentsBucketName', {
@@ -270,6 +568,18 @@ export class MinimalStack extends cdk.Stack {
       value: textractCompletionTopic.topicArn,
       description: 'SNS topic for Textract completion notifications',
       exportName: 'DocIntelTextractCompletionTopic',
+    });
+
+    new cdk.CfnOutput(this, 'OpenSearchDomainEndpoint', {
+      value: openSearchDomain.domainEndpoint,
+      description: 'OpenSearch domain endpoint (vector store)',
+      exportName: 'DocIntelOpenSearchEndpoint',
+    });
+
+    new cdk.CfnOutput(this, 'OpenSearchDashboardUrl', {
+      value: `https://${openSearchDomain.domainEndpoint}/_dashboards`,
+      description: 'OpenSearch Dashboards URL',
+      exportName: 'DocIntelOpenSearchDashboard',
     });
   }
 }

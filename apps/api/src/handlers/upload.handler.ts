@@ -379,10 +379,14 @@ export async function handler(
 
     const validation = validateRequestBody(body);
     if (!validation.isValid) {
-      return errorResponse(400, validation.error!, requestId);
+      return errorResponse(400, validation.error || 'Invalid request', requestId);
     }
 
-    const { filename, contentType } = validation.data!;
+    if (!validation.data) {
+      return errorResponse(400, 'Invalid request data', requestId);
+    }
+
+    const { filename, contentType } = validation.data;
 
     // Generate document ID
     const documentId = randomUUID();
@@ -392,7 +396,7 @@ export async function handler(
     const { uploadUrl, s3Key } = await generatePresignedUrl(
       documentId,
       filename,
-      contentType!,
+      contentType || 'application/octet-stream',
     );
 
     // Save metadata to DynamoDB

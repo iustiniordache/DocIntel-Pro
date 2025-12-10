@@ -26,7 +26,7 @@ async function bootstrap(): Promise<Handler> {
 }
 
 export const handler: Handler = async (
-  event: any,
+  event: unknown,
   context: Context,
   callback: Callback,
 ) => {
