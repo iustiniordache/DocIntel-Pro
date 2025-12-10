@@ -494,12 +494,6 @@ jobs:
           echo "api_url=$API_URL" >> $GITHUB_OUTPUT
           echo "API URL: $API_URL"
 
-          # Deploy storage stack
-          pnpm cdk deploy DocIntelProStorageStack --require-approval never
-
-          # Deploy API stack
-          pnpm cdk deploy DocIntelProApiStack --require-approval never
-
           # Deploy web stack (with API URL dependency)
           pnpm cdk deploy DocIntelProWebStack --require-approval never
 
@@ -602,12 +596,6 @@ jobs:
 
           echo "api_url=$API_URL" >> $GITHUB_OUTPUT
           echo "API URL: $API_URL"
-
-          # Deploy storage stack
-          pnpm cdk deploy DocIntelProStorageStack --require-approval never
-
-          # Deploy API stack
-          pnpm cdk deploy DocIntelProApiStack --require-approval never
 
           # Deploy web stack (with API URL dependency)
           pnpm cdk deploy DocIntelProWebStack --require-approval never
