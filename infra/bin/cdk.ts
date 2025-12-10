@@ -21,6 +21,9 @@ const env = {
 new MinimalStack(app, 'MinimalStack', {
   env,
   description: 'DocIntel Pro - Minimal deployment (Upload + TextractStart only)',
+  tags: {
+    AppManagerCFNStackKey: 'MinimalStack',
+  },
 });
 
 // Storage Stack (S3, DynamoDB)

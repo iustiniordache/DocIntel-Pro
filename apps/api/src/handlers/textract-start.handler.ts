@@ -26,6 +26,8 @@ import {
   DynamoDBClient,
   PutItemCommand,
   PutItemCommandInput,
+  UpdateItemCommand,
+  UpdateItemCommandInput,
 } from '@aws-sdk/client-dynamodb';
 import { marshall } from '@aws-sdk/util-dynamodb';
 import { randomUUID } from 'crypto';
@@ -206,17 +208,33 @@ async function validatePdfFile(bucket: string, key: string): Promise<ValidationR
 
 /**
  * Saves document metadata to DynamoDB
+ * Updates existing record if it exists (from upload handler)
  */
 async function saveDocumentMetadata(metadata: DocumentMetadata): Promise<void> {
-  const params: PutItemCommandInput = {
+  const params: UpdateItemCommandInput = {
     TableName: CONFIG.dynamodb.metadataTable,
-    Item: marshall(metadata),
+    Key: marshall({ documentId: metadata.documentId }),
+    UpdateExpression:
+      'SET #status = :status, #bucket = :bucket, s3Key = :s3Key, fileSize = :fileSize, ' +
+      'contentType = :contentType, createdAt = :createdAt',
+    ExpressionAttributeNames: {
+      '#status': 'status',
+      '#bucket': 'bucket',
+    },
+    ExpressionAttributeValues: marshall({
+      ':status': metadata.status,
+      ':bucket': metadata.bucket,
+      ':s3Key': metadata.s3Key,
+      ':fileSize': metadata.fileSize,
+      ':contentType': metadata.contentType,
+      ':createdAt': metadata.createdAt,
+    }),
   };
 
-  await dynamoClient.send(new PutItemCommand(params));
+  await dynamoClient.send(new UpdateItemCommand(params));
   logger.info(
     { documentId: metadata.documentId, table: CONFIG.dynamodb.metadataTable },
-    'Document metadata saved',
+    'Document metadata updated',
   );
 }
 
@@ -373,7 +391,10 @@ async function processRecord(record: S3EventRecord, requestId: string): Promise<
     return;
   }
 
-  const documentId = randomUUID();
+  // Extract documentId from S3 key path: documents/<documentId>/<filename>
+  const keyParts = key.split('/');
+  const documentId: string =
+    keyParts.length >= 2 && keyParts[1] ? keyParts[1] : randomUUID();
   const now = new Date().toISOString();
 
   logger.info(
@@ -384,6 +405,7 @@ async function processRecord(record: S3EventRecord, requestId: string): Promise<
       requestId,
       documentId,
       fileSize: validation.fileSize,
+      extractedFromKey: keyParts.length >= 2,
     },
     'File validated successfully',
   );

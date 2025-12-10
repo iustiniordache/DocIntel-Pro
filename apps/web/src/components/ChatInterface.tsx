@@ -193,7 +193,11 @@ function MessageBubble({ message }: { message: Message }) {
             </p>
             <div className="space-y-2">
               {message.sources.map((source, index) => (
-                <SourceCard key={source.chunkId} source={source} index={index} />
+                <SourceCard
+                  key={`${source.chunkId}-${index}`}
+                  source={source}
+                  index={index}
+                />
               ))}
             </div>
           </div>

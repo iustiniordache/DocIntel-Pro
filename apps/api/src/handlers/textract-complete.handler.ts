@@ -248,13 +248,14 @@ async function indexChunks(
       id: chunkId,
       body: {
         documentId,
-        filename,
         chunkId,
-        chunkIndex: i,
         content: chunk.text,
         embedding,
-        pageNumber: chunk.pageNumber,
-        createdAt: new Date().toISOString(),
+        metadata: {
+          page: chunk.pageNumber,
+          source: filename,
+          timestamp: new Date().toISOString(),
+        },
       },
     });
 
