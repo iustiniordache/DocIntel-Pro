@@ -598,12 +598,14 @@ jobs:
           echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
 
       - name: Send email notification
-        if: success() && secrets.NOTIFICATION_EMAIL != ''
+        if: success() && env.NOTIFICATION_EMAIL != ''
+        env:
+          NOTIFICATION_EMAIL: ${{ secrets.NOTIFICATION_EMAIL }}
         run: |
           # This would typically use a service like SendGrid or AWS SES
           echo "Production deployment successful" | \
           mail -s "DocIntel Pro - Production Deployment" \
-          ${{ secrets.NOTIFICATION_EMAIL }}
+          $NOTIFICATION_EMAIL
 
   # ===========================================================================
   # Job 10: Failure Notifications
