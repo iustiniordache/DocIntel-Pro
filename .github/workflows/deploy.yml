@@ -384,7 +384,7 @@ jobs:
   # ===========================================================================
   deploy-staging:
     name: Deploy to Staging
-    needs: cdk-synth
+    needs: [cdk-synth, build-api, build-web]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
     environment:
