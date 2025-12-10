@@ -50,7 +50,8 @@ exports.handler = async (event, context) => {
 
       // Check if mapping is correct
       const mapping = await client.indices.getMapping({ index: indexName });
-      const embeddingType = mapping.body[indexName]?.mappings?.properties?.embedding?.type;
+      const embeddingType =
+        mapping.body[indexName]?.mappings?.properties?.embedding?.type;
 
       if (embeddingType === 'knn_vector') {
         console.log('Index has correct knn_vector mapping');
@@ -126,7 +127,7 @@ async function createIndex(client, indexName) {
         index: {
           number_of_shards: 1,
           number_of_replicas: 0,
-          'knn': true,
+          knn: true,
           'knn.algo_param.ef_search': 100,
         },
       },

@@ -3,12 +3,13 @@ const { defaultProvider } = require('@aws-sdk/credential-provider-node');
 const aws4 = require('aws4');
 
 const indexName = 'docintel-vectors';
-const endpoint = 'search-docintel-vectors-dev-ndhlxs7oks7frhkm6odabfziua.us-east-1.es.amazonaws.com';
+const endpoint =
+  'search-docintel-vectors-dev-ndhlxs7oks7frhkm6odabfziua.us-east-1.es.amazonaws.com';
 
 async function checkIndexStatus() {
   try {
     const credentials = await defaultProvider()();
-    
+
     const client = new Client({
       node: `https://${endpoint}`,
       Connection: class extends require('@opensearch-project/opensearch').Connection {
@@ -18,7 +19,7 @@ async function checkIndexStatus() {
           request.region = 'us-east-1';
           request.headers = request.headers || {};
           request.headers['host'] = endpoint;
-          
+
           return aws4.sign(request, credentials);
         }
       },
@@ -26,22 +27,24 @@ async function checkIndexStatus() {
 
     // Check if index exists
     const exists = await client.indices.exists({ index: indexName });
-    
+
     if (!exists.body) {
       console.log(`❌ Index '${indexName}' does NOT exist`);
-      console.log('The index needs to be created by uploading a document or will be created on next query.');
+      console.log(
+        'The index needs to be created by uploading a document or will be created on next query.',
+      );
       return;
     }
 
     console.log(`✅ Index '${indexName}' exists`);
-    
+
     // Get mapping
     const mapping = await client.indices.getMapping({ index: indexName });
     const embeddingType = mapping.body[indexName]?.mappings?.properties?.embedding?.type;
-    
+
     console.log('\n📋 Index Mapping:');
     console.log(`  Embedding field type: ${embeddingType}`);
-    
+
     if (embeddingType === 'knn_vector') {
       const embeddingConfig = mapping.body[indexName]?.mappings?.properties?.embedding;
       console.log(`  ✅ Correct type (knn_vector)`);
@@ -52,11 +55,11 @@ async function checkIndexStatus() {
     } else {
       console.log(`  ❌ Wrong type (should be knn_vector, got ${embeddingType})`);
     }
-    
+
     // Count documents
     const count = await client.count({ index: indexName });
     console.log(`\n📊 Document count: ${count.body.count}`);
-    
+
     if (count.body.count > 0) {
       // Get sample documents
       const docs = await client.search({
@@ -66,7 +69,7 @@ async function checkIndexStatus() {
           size: 5,
         },
       });
-      
+
       console.log('\n📄 Sample documents:');
       docs.body.hits.hits.forEach((hit, idx) => {
         console.log(`\n  Document ${idx + 1}:`);
@@ -81,7 +84,6 @@ async function checkIndexStatus() {
         }
       });
     }
-    
   } catch (error) {
     console.error('❌ Error checking index status:', error.message);
     if (error.meta?.body) {
@@ -93,7 +95,7 @@ async function checkIndexStatus() {
 
 checkIndexStatus()
   .then(() => console.log('\n✅ Check complete'))
-  .catch(error => {
+  .catch((error) => {
     console.error('\n❌ Check failed');
     process.exit(1);
   });

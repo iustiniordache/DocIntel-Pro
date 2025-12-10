@@ -16,7 +16,14 @@ async function testKNNQuery() {
     // Test 1: Check index mappings
     console.log('\n=== Test 1: Index Mappings ===');
     const mappings = await client.indices.getMapping({ index: 'docintel-vectors' });
-    console.log('Mappings:', JSON.stringify(mappings.body['docintel-vectors']?.mappings?.properties?.embedding, null, 2));
+    console.log(
+      'Mappings:',
+      JSON.stringify(
+        mappings.body['docintel-vectors']?.mappings?.properties?.embedding,
+        null,
+        2,
+      ),
+    );
 
     // Test 2: Get one document
     console.log('\n=== Test 2: Sample Document ===');
@@ -33,7 +40,7 @@ async function testKNNQuery() {
     // Test 3: Try k-NN query with a sample embedding
     console.log('\n=== Test 3: k-NN Query with Sample Embedding ===');
     const testVector = doc?._source?.embedding || Array(1024).fill(0);
-    
+
     const knnResult = await client.search({
       index: 'docintel-vectors',
       body: {
@@ -48,9 +55,12 @@ async function testKNNQuery() {
         },
       },
     });
-    
+
     console.log('k-NN results count:', knnResult.body.hits.hits.length);
-    console.log('Scores:', knnResult.body.hits.hits.map(h => h._score));
+    console.log(
+      'Scores:',
+      knnResult.body.hits.hits.map((h) => h._score),
+    );
 
     // Test 4: Try alternative query format
     console.log('\n=== Test 4: Alternative k-NN Format ===');
@@ -72,10 +82,12 @@ async function testKNNQuery() {
         },
       },
     });
-    
-    console.log('Alternative results count:', altResult.body.hits.hits.length);
-    console.log('Scores:', altResult.body.hits.hits.map(h => h._score));
 
+    console.log('Alternative results count:', altResult.body.hits.hits.length);
+    console.log(
+      'Scores:',
+      altResult.body.hits.hits.map((h) => h._score),
+    );
   } catch (error) {
     console.error('Error:', error.message);
     if (error.meta?.body) {
