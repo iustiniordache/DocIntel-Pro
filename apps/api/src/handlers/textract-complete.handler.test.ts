@@ -28,6 +28,9 @@ process.env['DYNAMODB_METADATA_TABLE'] = 'test-metadata-table';
 process.env['DYNAMODB_JOBS_TABLE'] = 'test-jobs-table';
 process.env['TEXTRACT_CONFIDENCE_THRESHOLD'] = '80';
 process.env['TEXTRACT_COST_PER_PAGE'] = '0.0015';
+process.env['OPENSEARCH_DOMAIN'] = 'https://test-domain.us-east-1.es.amazonaws.com';
+process.env['OPENSEARCH_INDEX_NAME'] = 'test-vectors';
+process.env['BEDROCK_EMBEDDING_MODEL_ID'] = 'amazon.titan-embed-text-v2:0';
 process.env['LOG_LEVEL'] = 'error'; // Suppress logs in tests
 
 describe('textract-complete.handler', () => {
@@ -67,6 +70,9 @@ describe('textract-complete.handler', () => {
     delete process.env['DYNAMODB_JOBS_TABLE'];
     delete process.env['TEXTRACT_CONFIDENCE_THRESHOLD'];
     delete process.env['TEXTRACT_COST_PER_PAGE'];
+    delete process.env['OPENSEARCH_DOMAIN'];
+    delete process.env['OPENSEARCH_INDEX_NAME'];
+    delete process.env['BEDROCK_EMBEDDING_MODEL_ID'];
     delete process.env['LOG_LEVEL'];
   });
 

@@ -338,7 +338,7 @@ describe('Query Handler', () => {
   });
 
   describe('Similarity Filtering', () => {
-    it('should filter chunks below 0.7 similarity threshold', async () => {
+    it('should filter chunks below 0.5 similarity threshold', async () => {
       const event = createEvent({ question: 'Test question' });
 
       mockEmbeddingService.embedText.mockResolvedValue(new Array(1024).fill(0.5));
@@ -347,8 +347,9 @@ describe('Query Handler', () => {
       const searchResults = [
         createSearchResult('chunk-1', 0.95, 'Very relevant'),
         createSearchResult('chunk-2', 0.72, 'Somewhat relevant'),
-        createSearchResult('chunk-3', 0.65, 'Less relevant'), // Below threshold
-        createSearchResult('chunk-4', 0.4, 'Not relevant'), // Below threshold
+        createSearchResult('chunk-3', 0.52, 'Somewhat relevant'),
+        createSearchResult('chunk-4', 0.45, 'Less relevant'), // Below threshold
+        createSearchResult('chunk-5', 0.3, 'Not relevant'), // Below threshold
       ];
       mockVectorStoreService.hybridSearch.mockResolvedValue(searchResults);
 
@@ -365,10 +366,11 @@ describe('Query Handler', () => {
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.body);
 
-      // Should only include chunks with similarity >= 0.7
-      expect(body.sources).toHaveLength(2);
-      expect(body.sources[0].similarity).toBeGreaterThanOrEqual(0.7);
-      expect(body.sources[1].similarity).toBeGreaterThanOrEqual(0.7);
+      // Should only include chunks with similarity >= 0.5
+      expect(body.sources).toHaveLength(3);
+      expect(body.sources[0].similarity).toBeGreaterThanOrEqual(0.5);
+      expect(body.sources[1].similarity).toBeGreaterThanOrEqual(0.5);
+      expect(body.sources[2].similarity).toBeGreaterThanOrEqual(0.5);
     });
   });
 

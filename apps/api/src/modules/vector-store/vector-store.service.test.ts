@@ -17,6 +17,11 @@ const mockClient = {
 // Mock the OpenSearch Client constructor
 vi.mock('@opensearch-project/opensearch', () => ({
   Client: vi.fn(() => mockClient),
+  Connection: class MockConnection {
+    buildRequestObject(params: unknown) {
+      return params;
+    }
+  },
 }));
 
 describe('VectorStoreService', () => {
@@ -381,8 +386,9 @@ describe('VectorStoreService', () => {
     const mockQueryVector = new Array(1024).fill(0.5);
     const queryText = 'test query';
 
-    beforeEach(() => {
+    beforeEach(async () => {
       mockClient.indices.exists.mockResolvedValue({ body: true });
+      await service.initializeIndex();
     });
 
     it('should perform hybrid search with vector and keyword', async () => {
@@ -425,26 +431,11 @@ describe('VectorStoreService', () => {
         body: {
           size: 10,
           query: {
-            bool: {
-              should: [
-                {
-                  knn: {
-                    embedding: {
-                      vector: mockQueryVector,
-                      k: 10,
-                    },
-                  },
-                },
-                {
-                  multi_match: {
-                    query: queryText,
-                    fields: ['content^2', 'metadata.*'],
-                    type: 'best_fields',
-                    operator: 'or',
-                  },
-                },
-              ],
-              minimum_should_match: 1,
+            knn: {
+              embedding: {
+                vector: mockQueryVector,
+                k: 10,
+              },
             },
           },
           _source: ['chunkId', 'documentId', 'content', 'metadata'],
@@ -551,13 +542,15 @@ describe('VectorStoreService', () => {
       // Trigger client creation
       await service.initializeIndex();
 
-      expect(Client).toHaveBeenCalledWith({
-        node: 'https://test-domain.us-east-1.es.amazonaws.com',
-        requestTimeout: 30000,
-        ssl: {
-          rejectUnauthorized: false, // test environment
-        },
-      });
+      expect(Client).toHaveBeenCalledWith(
+        expect.objectContaining({
+          node: 'https://test-domain.us-east-1.es.amazonaws.com',
+          requestTimeout: 30000,
+          ssl: {
+            rejectUnauthorized: false, // test environment
+          },
+        }),
+      );
     });
   });
 

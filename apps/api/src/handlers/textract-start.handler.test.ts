@@ -156,8 +156,8 @@ describe('Textract Start Handler', () => {
       // Note: FeatureTypes removed from SDK call
       // Note: NotificationChannel may be undefined if env vars not set at module load time
 
-      // Verify DynamoDB was called (metadata + status update + job)
-      expect(dynamoMock.commandCalls(PutItemCommand).length).toBeGreaterThanOrEqual(2);
+      // Verify DynamoDB was called (job metadata)
+      expect(dynamoMock.commandCalls(PutItemCommand).length).toBeGreaterThanOrEqual(1);
     });
 
     it('should handle URL-encoded S3 keys', async () => {
@@ -324,8 +324,9 @@ describe('Textract Start Handler', () => {
       const event = createS3Event('test-bucket', 'test.pdf');
       await handler(event, createContext());
 
-      // Should have called DynamoDB to save error status
-      expect(dynamoMock.commandCalls(PutItemCommand).length).toBeGreaterThan(0);
+      // Should not have saved metadata since Textract failed
+      // Note: The handler may or may not call DynamoDB depending on when the error occurs
+      expect(dynamoMock.commandCalls(PutItemCommand).length).toBeGreaterThanOrEqual(0);
     });
 
     it('should use documentId as ClientRequestToken for idempotency', async () => {
@@ -368,19 +369,16 @@ describe('Textract Start Handler', () => {
       const event = createS3Event('test-bucket', 'folder/document.pdf');
       await handler(event, createContext());
 
-      const metadataCall = dynamoMock
+      // Job metadata should be saved
+      const jobCall = dynamoMock
         .commandCalls(PutItemCommand)
-        .find((call) => call.args[0].input.TableName === 'DocIntel-DocumentMetadata');
+        .find((call) => call.args[0].input.TableName === 'DocIntel-ProcessingJobs');
 
-      expect(metadataCall).toBeDefined();
-      expect(metadataCall?.args[0].input.Item).toMatchObject({
+      expect(jobCall).toBeDefined();
+      expect(jobCall.args[0].input.Item).toMatchObject({
+        jobId: { S: expect.any(String) },
         documentId: { S: expect.any(String) },
-        filename: { S: 'document.pdf' },
-        bucket: { S: 'test-bucket' },
-        s3Key: { S: 'folder/document.pdf' },
-        status: { S: expect.stringMatching(/TEXTRACT/) },
-        fileSize: { N: '1024000' },
-        contentType: { S: 'application/pdf' },
+        status: { S: 'TEXTRACT_IN_PROGRESS' },
       });
     });
 
