@@ -494,8 +494,7 @@ export class MinimalStack extends cdk.Stack {
           'http://localhost:3000',
           'http://localhost:3001',
           'https://localhost:3000',
-          // Add production domain when ready
-          // 'https://your-domain.com'
+          'https://*.cloudfront.net',
         ],
         allowMethods: apigateway.Cors.ALL_METHODS,
         allowHeaders: [
