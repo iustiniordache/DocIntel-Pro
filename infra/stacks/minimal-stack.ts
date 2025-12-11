@@ -41,6 +41,7 @@ export class MinimalStack extends cdk.Stack {
             'http://localhost:3000',
             'http://localhost:3001',
             'https://localhost:3000',
+            'https://*.cloudfront.net',
             // Add production domain when ready
             // 'https://your-domain.com'
           ],
