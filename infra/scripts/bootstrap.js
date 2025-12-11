@@ -23,14 +23,16 @@ async function main() {
     console.log(`Account ID: ${accountId}`);
     console.log(`Region: ${REGION}\n`);
 
-    // Run bootstrap directly without CDK app context
-    // Using --app parameter with empty app bypasses the need for cdk.json
+    // Run bootstrap from parent directory to avoid loading CDK app
+    // The bootstrap command will work without a CDK app
     const bootstrapCmd = `npx --yes aws-cdk@latest bootstrap aws://${accountId}/${REGION} --cloudformation-execution-policies arn:aws:iam::aws:policy/AdministratorAccess`;
 
     console.log(`Running: ${bootstrapCmd}\n`);
+    console.log(`Working directory: ${path.join(__dirname, '../..')}\n`);
 
     execSync(bootstrapCmd, {
       stdio: 'inherit',
+      cwd: path.join(__dirname, '../..'), // Run from repo root, not infra/
       env: { ...process.env },
     });
 
