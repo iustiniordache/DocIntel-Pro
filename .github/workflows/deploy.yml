@@ -496,142 +496,142 @@ jobs:
   # ===========================================================================
   # Job 9: Deploy to Production (Manual Approval)
   # ===========================================================================
-  deploy-production:
-    name: Deploy to Production
-    needs: deploy-staging
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
-    environment:
-      name: production
-      url: ${{ steps.deploy.outputs.web_url }}
-
-    permissions:
-      id-token: write
-      contents: read
-
-    steps:
-      - name: Manual Approval Required
-        run: |
-          echo "## ⏸️  Production Deployment Pending" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Status:** Waiting for manual approval" >> $GITHUB_STEP_SUMMARY
-          echo "**Staging URL:** (completed)" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "ℹ️  This deployment requires approval from authorized reviewers." >> $GITHUB_STEP_SUMMARY
-          echo "Please review the staging deployment before approving." >> $GITHUB_STEP_SUMMARY
-
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v3
-        with:
-          version: ${{ env.PNPM_VERSION }}
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN_PRODUCTION }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Install dependencies
-        run: |
-          cd infra
-          pnpm install --frozen-lockfile
-
-      - name: Download API build
-        uses: actions/download-artifact@v4
-        with:
-          name: api-build
-          path: apps/api/build
-
-      - name: Build CDK
-        run: |
-          cd infra
-          pnpm build
-
-      - name: Deploy infrastructure stacks
-        id: deploy
-        run: |
-          cd infra
-
-          # Deploy MinimalStack first (contains API)
-          pnpm cdk deploy MinimalStack --require-approval never
-
-          # Get API URL from MinimalStack
-          API_URL=$(aws cloudformation describe-stacks \
-            --stack-name MinimalStack \
-            --query 'Stacks[0].Outputs[?OutputKey==`ApiEndpoint`].OutputValue' \
-            --output text)
-
-          echo "api_url=$API_URL" >> $GITHUB_OUTPUT
-          echo "API URL: $API_URL"
-
-          # Deploy web stack (with API URL dependency)
-          pnpm cdk deploy DocIntelProWebStack --require-approval never
-
-          # Get web URL
-          WEB_URL=$(aws cloudformation describe-stacks \
-            --stack-name DocIntelProWebStack \
-            --query 'Stacks[0].Outputs[?OutputKey==`WebsiteURL`].OutputValue' \
-            --output text)
-
-          echo "web_url=$WEB_URL" >> $GITHUB_OUTPUT
-
-      - name: Build Web with API URL
-        working-directory: apps/web
-        env:
-          NEXT_PUBLIC_API_URL: ${{ steps.deploy.outputs.api_url }}
-        run: |
-          echo "Building Next.js app with API URL: $NEXT_PUBLIC_API_URL"
-          pnpm build
-
-      - name: Deploy web content
-        env:
-          NEXT_PUBLIC_API_URL: ${{ steps.deploy.outputs.api_url }}
-        run: |
-          cd infra
-          node scripts/deploy-web-content.js
-
-      - name: Deployment summary
-        run: |
-          echo "## 🚀 Production Deployment" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Status:** ✅ Deployed successfully" >> $GITHUB_STEP_SUMMARY
-          echo "**Web URL:** ${{ steps.deploy.outputs.web_url }}" >> $GITHUB_STEP_SUMMARY
-          echo "**API URL:** ${{ steps.deploy.outputs.api_url }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Deployed at:** $(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
-          echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
-
-      - name: Send email notification
-        if: success() && env.NOTIFICATION_EMAIL != ''
-        env:
-          NOTIFICATION_EMAIL: ${{ secrets.NOTIFICATION_EMAIL }}
-        run: |
-          # This would typically use a service like SendGrid or AWS SES
-          echo "Production deployment successful" | \
-          mail -s "DocIntel Pro - Production Deployment" \
-          $NOTIFICATION_EMAIL
+  # Commented out for now - enable when ready for production deployments
+  # deploy-production:
+  #   name: Deploy to Production
+  #   needs: deploy-staging
+  #   runs-on: ubuntu-latest
+  #   if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+  #   environment:
+  #     name: production
+  #     url: ${{ steps.deploy.outputs.web_url }}
+  #
+  #   permissions:
+  #     id-token: write
+  #     contents: read
+  #
+  #   steps:
+  #     - name: Manual Approval Required
+  #       run: |
+  #         echo "## ⏸️  Production Deployment Pending" >> $GITHUB_STEP_SUMMARY
+  #         echo "" >> $GITHUB_STEP_SUMMARY
+  #         echo "**Status:** Waiting for manual approval" >> $GITHUB_STEP_SUMMARY
+  #         echo "**Staging URL:** (completed)" >> $GITHUB_STEP_SUMMARY
+  #         echo "" >> $GITHUB_STEP_SUMMARY
+  #         echo "ℹ️  This deployment requires approval from authorized reviewers." >> $GITHUB_STEP_SUMMARY
+  #         echo "Please review the staging deployment before approving." >> $GITHUB_STEP_SUMMARY
+  #
+  #     - name: Checkout code
+  #       uses: actions/checkout@v4
+  #
+  #     - name: Setup Node.js
+  #       uses: actions/setup-node@v4
+  #       with:
+  #         node-version: ${{ env.NODE_VERSION }}
+  #
+  #     - name: Setup pnpm
+  #       uses: pnpm/action-setup@v3
+  #       with:
+  #         version: ${{ env.PNPM_VERSION }}
+  #
+  #     - name: Configure AWS credentials
+  #       uses: aws-actions/configure-aws-credentials@v4
+  #       with:
+  #         role-to-assume: ${{ secrets.AWS_ROLE_ARN_PRODUCTION }}
+  #         aws-region: ${{ env.AWS_REGION }}
+  #
+  #     - name: Install dependencies
+  #       run: |
+  #         cd infra
+  #         pnpm install --frozen-lockfile
+  #
+  #     - name: Download API build
+  #       uses: actions/download-artifact@v4
+  #       with:
+  #         name: api-build
+  #         path: apps/api/build
+  #
+  #     - name: Build CDK
+  #       run: |
+  #         cd infra
+  #         pnpm build
+  #
+  #     - name: Deploy infrastructure stacks
+  #       id: deploy
+  #       run: |
+  #         cd infra
+  #
+  #         # Deploy MinimalStack first (contains API)
+  #         pnpm cdk deploy MinimalStack --require-approval never
+  #
+  #         # Get API URL from MinimalStack
+  #         API_URL=$(aws cloudformation describe-stacks \
+  #           --stack-name MinimalStack \
+  #           --query 'Stacks[0].Outputs[?OutputKey==`ApiEndpoint`].OutputValue' \
+  #           --output text)
+  #
+  #         echo "api_url=$API_URL" >> $GITHUB_OUTPUT
+  #         echo "API URL: $API_URL"
+  #
+  #         # Deploy web stack (with API URL dependency)
+  #         pnpm cdk deploy DocIntelProWebStack --require-approval never
+  #
+  #         # Get web URL
+  #         WEB_URL=$(aws cloudformation describe-stacks \
+  #           --stack-name DocIntelProWebStack \
+  #           --query 'Stacks[0].Outputs[?OutputKey==`WebsiteURL`].OutputValue' \
+  #           --output text)
+  #
+  #         echo "web_url=$WEB_URL" >> $GITHUB_OUTPUT
+  #
+  #     - name: Build Web with API URL
+  #       working-directory: apps/web
+  #       env:
+  #         NEXT_PUBLIC_API_URL: ${{ steps.deploy.outputs.api_url }}
+  #       run: |
+  #         echo "Building Next.js app with API URL: $NEXT_PUBLIC_API_URL"
+  #         pnpm build
+  #
+  #     - name: Deploy web content
+  #       env:
+  #         NEXT_PUBLIC_API_URL: ${{ steps.deploy.outputs.api_url }}
+  #       run: |
+  #         cd infra
+  #         node scripts/deploy-web-content.js
+  #
+  #     - name: Deployment summary
+  #       run: |
+  #         echo "## 🚀 Production Deployment" >> $GITHUB_STEP_SUMMARY
+  #         echo "" >> $GITHUB_STEP_SUMMARY
+  #         echo "**Status:** ✅ Deployed successfully" >> $GITHUB_STEP_SUMMARY
+  #         echo "**Web URL:** ${{ steps.deploy.outputs.web_url }}" >> $GITHUB_STEP_SUMMARY
+  #         echo "**API URL:** ${{ steps.deploy.outputs.api_url }}" >> $GITHUB_STEP_SUMMARY
+  #         echo "**Deployed at:** $(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+  #         echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+  #
+  #     - name: Send email notification
+  #       if: success() && env.NOTIFICATION_EMAIL != ''
+  #       env:
+  #         NOTIFICATION_EMAIL: ${{ secrets.NOTIFICATION_EMAIL }}
+  #       run: |
+  #         # This would typically use a service like SendGrid or AWS SES
+  #         echo "Production deployment successful" | \
+  #         mail -s "DocIntel Pro - Production Deployment" \
+  #         $NOTIFICATION_EMAIL
 
   # ===========================================================================
   # Job 10: Failure Notifications
   # ===========================================================================
   notify-failure:
     name: Notify on Failure
-    needs:
-      [
+    needs: [
         lint,
         test-api,
         test-integration,
         build-api,
         build-web,
         deploy-staging,
-        deploy-production,
+        # deploy-production, # Commented out
       ]
     runs-on: ubuntu-latest
     if: failure()
