@@ -322,8 +322,6 @@ jobs:
             exit 1
           fi
           echo "✅ Web build successful (validation only)"
-          if-no-files-found: error
-          include-hidden-files: true
 
   # ===========================================================================
   # Job 7: CDK Synthesize
