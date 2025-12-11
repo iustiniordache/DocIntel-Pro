@@ -308,50 +308,20 @@ jobs:
       - name: Build Web
         working-directory: apps/web
         env:
-          NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL || 'https://placeholder-api-url.com' }}
+          NEXT_PUBLIC_API_URL: 'https://placeholder-api-url.com'
         run: |
-          echo "Building Next.js app..."
+          echo "Building Next.js app for validation..."
+          echo "Note: This build uses a placeholder API URL for validation only."
+          echo "The actual deployment will rebuild with the real API URL."
           pnpm build
-          echo "Build completed. Checking output..."
-          ls -la
-          if [ -d ".next" ]; then
-            echo "✅ .next directory found"
-            ls -la .next
-          else
-            echo "❌ .next directory NOT found"
-            pwd
-          fi
 
       - name: Verify build output
         run: |
-          echo "Checking from workspace root..."
-          pwd
-          echo "Listing workspace root:"
-          ls -la
-          echo "Listing apps/:"
-          ls -la apps/
-          echo "Listing apps/web/:"
-          ls -la apps/web/
-          if [ ! -d "apps/web/.next" ]; then
-            echo "❌ .next directory not found at apps/web/.next"
+          if [ ! -d "apps/web/out" ]; then
+            echo "❌ out directory not found at apps/web/out"
             exit 1
           fi
-          echo "✅ Web build successful"
-          echo "Contents of apps/web/.next:"
-          ls -la apps/web/.next
-
-      - name: Prepare artifact directory
-        run: |
-          mkdir -p .artifact-staging
-          cp -r apps/web/out .artifact-staging/
-          ls -la .artifact-staging/out
-
-      - name: Upload Web build artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: web-build
-          path: .artifact-staging/out
-          retention-days: 7
+          echo "✅ Web build successful (validation only)"
           if-no-files-found: error
           include-hidden-files: true
 
@@ -360,7 +330,7 @@ jobs:
   # ===========================================================================
   cdk-synth:
     name: CDK Synthesize
-    needs: [build-api, build-web]
+    needs: [build-api]
     runs-on: ubuntu-latest
 
     steps:
@@ -420,12 +390,11 @@ jobs:
   # ===========================================================================
   deploy-staging:
     name: Deploy to Staging
-    needs: [cdk-synth, build-api, build-web]
+    needs: [cdk-synth, build-api]
     runs-on: ubuntu-latest
     if: |
       (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') &&
       needs.build-api.result == 'success' &&
-      needs.build-web.result == 'success' &&
       needs.cdk-synth.result == 'success'
     environment:
       name: staging
@@ -466,12 +435,6 @@ jobs:
           name: api-build
           path: apps/api/build
 
-      - name: Download Web build
-        uses: actions/download-artifact@v4
-        with:
-          name: web-build
-          path: apps/web/out
-
       - name: Build CDK
         run: |
           cd infra
@@ -504,6 +467,14 @@ jobs:
             --output text)
 
           echo "web_url=$WEB_URL" >> $GITHUB_OUTPUT
+
+      - name: Build Web with API URL
+        working-directory: apps/web
+        env:
+          NEXT_PUBLIC_API_URL: ${{ steps.deploy.outputs.api_url }}
+        run: |
+          echo "Building Next.js app with API URL: $NEXT_PUBLIC_API_URL"
+          pnpm build
 
       - name: Deploy web content
         env:
@@ -579,12 +550,6 @@ jobs:
           name: api-build
           path: apps/api/build
 
-      - name: Download Web build
-        uses: actions/download-artifact@v4
-        with:
-          name: web-build
-          path: apps/web/out
-
       - name: Build CDK
         run: |
           cd infra
@@ -617,6 +582,14 @@ jobs:
             --output text)
 
           echo "web_url=$WEB_URL" >> $GITHUB_OUTPUT
+
+      - name: Build Web with API URL
+        working-directory: apps/web
+        env:
+          NEXT_PUBLIC_API_URL: ${{ steps.deploy.outputs.api_url }}
+        run: |
+          echo "Building Next.js app with API URL: $NEXT_PUBLIC_API_URL"
+          pnpm build
 
       - name: Deploy web content
         env:
