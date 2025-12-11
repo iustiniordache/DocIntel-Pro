@@ -539,6 +539,16 @@ jobs:
       contents: read
 
     steps:
+      - name: Manual Approval Required
+        run: |
+          echo "## ⏸️  Production Deployment Pending" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** Waiting for manual approval" >> $GITHUB_STEP_SUMMARY
+          echo "**Staging URL:** (completed)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "ℹ️  This deployment requires approval from authorized reviewers." >> $GITHUB_STEP_SUMMARY
+          echo "Please review the staging deployment before approving." >> $GITHUB_STEP_SUMMARY
+
       - name: Checkout code
         uses: actions/checkout@v4
 
