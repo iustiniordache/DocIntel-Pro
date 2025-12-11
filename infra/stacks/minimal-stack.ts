@@ -37,14 +37,7 @@ export class MinimalStack extends cdk.Stack {
             s3.HttpMethods.POST,
             s3.HttpMethods.HEAD,
           ],
-          allowedOrigins: [
-            'http://localhost:3000',
-            'http://localhost:3001',
-            'https://localhost:3000',
-            'https://*.cloudfront.net',
-            // Add production domain when ready
-            // 'https://your-domain.com'
-          ],
+          allowedOrigins: ['*'], // Allow all origins
           allowedHeaders: ['*'],
           exposedHeaders: [
             'ETag',
@@ -487,16 +480,19 @@ export class MinimalStack extends cdk.Stack {
     // ==========================================
     // 9. API GATEWAY (REST)
     // ==========================================
+
+    // CloudWatch Log Group for API Gateway Access Logs
+    const apiLogGroup = new logs.LogGroup(this, 'ApiGatewayAccessLogs', {
+      logGroupName: '/aws/apigateway/docintel-api',
+      retention: logs.RetentionDays.ONE_WEEK,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
     const api = new apigateway.RestApi(this, 'DocIntelApi', {
       restApiName: 'DocIntel API',
       description: 'API for DocIntel document processing - v2',
       defaultCorsPreflightOptions: {
-        allowOrigins: [
-          'http://localhost:3000',
-          'http://localhost:3001',
-          'https://localhost:3000',
-          'https://*.cloudfront.net',
-        ],
+        allowOrigins: apigateway.Cors.ALL_ORIGINS, // Allow all origins (*)
         allowMethods: apigateway.Cors.ALL_METHODS,
         allowHeaders: [
           'Content-Type',
@@ -512,7 +508,23 @@ export class MinimalStack extends cdk.Stack {
         throttlingRateLimit: 100,
         throttlingBurstLimit: 200,
         description: `Deployment with /documents endpoint - ${Date.now()}`,
+        loggingLevel: apigateway.MethodLoggingLevel.INFO,
+        dataTraceEnabled: true,
+        metricsEnabled: true,
+        accessLogDestination: new apigateway.LogGroupLogDestination(apiLogGroup),
+        accessLogFormat: apigateway.AccessLogFormat.jsonWithStandardFields({
+          caller: true,
+          httpMethod: true,
+          ip: true,
+          protocol: true,
+          requestTime: true,
+          resourcePath: true,
+          responseLength: true,
+          status: true,
+          user: true,
+        }),
       },
+      cloudWatchRole: true,
     });
 
     // POST /upload endpoint
