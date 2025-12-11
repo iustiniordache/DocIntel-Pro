@@ -54,7 +54,7 @@ jobs:
       - name: Bootstrap CDK
         run: |
           cd infra
-          pnpm cdk bootstrap aws://$(aws sts get-caller-identity --query Account --output text)/${{ env.AWS_REGION }}
+          node scripts/bootstrap.js
 
       - name: Summary
         run: |
