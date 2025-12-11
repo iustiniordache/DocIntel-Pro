@@ -30,9 +30,20 @@ async function main() {
     }
     fs.mkdirSync(tempDir, { recursive: true });
 
+    // Create cdk.out directory with valid manifest
+    const cdkOutDir = path.join(tempDir, 'cdk.out');
+    fs.mkdirSync(cdkOutDir, { recursive: true });
+
+    // Write a valid CDK assembly manifest
+    const manifest = {
+      version: '36.0.0',
+      artifacts: {},
+    };
+    fs.writeFileSync(path.join(cdkOutDir, 'manifest.json'), JSON.stringify(manifest, null, 2));
+
     // Create minimal cdk.json
     const cdkJson = {
-      app: 'echo "{}"',
+      app: 'echo "CDK bootstrap environment"',
       context: {},
     };
     fs.writeFileSync(path.join(tempDir, 'cdk.json'), JSON.stringify(cdkJson, null, 2));
