@@ -3,7 +3,10 @@
  * Handles communication with the backend API Gateway
  */
 
-const API_BASE_URL = process.env['NEXT_PUBLIC_API_URL'] || 'http://localhost:3001';
+// Remove trailing slash from API URL to avoid double slashes
+const API_BASE_URL = (
+  process.env['NEXT_PUBLIC_API_URL'] || 'http://localhost:3001'
+).replace(/\/$/, '');
 
 export interface UploadResponse {
   uploadUrl: string;

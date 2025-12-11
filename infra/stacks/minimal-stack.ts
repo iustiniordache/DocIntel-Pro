@@ -505,7 +505,7 @@ export class MinimalStack extends cdk.Stack {
           'X-Api-Key',
           'X-Amz-Security-Token',
         ],
-        allowCredentials: true,
+        allowCredentials: false,
       },
       deployOptions: {
         stageName: 'prod',
