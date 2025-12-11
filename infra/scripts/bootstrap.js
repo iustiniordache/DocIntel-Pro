@@ -23,46 +23,16 @@ async function main() {
     console.log(`Account ID: ${accountId}`);
     console.log(`Region: ${REGION}\n`);
 
-    // Create a temporary directory for bootstrap
-    const tempDir = path.join(__dirname, '../.bootstrap-temp');
-    if (fs.existsSync(tempDir)) {
-      fs.rmSync(tempDir, { recursive: true, force: true });
-    }
-    fs.mkdirSync(tempDir, { recursive: true });
-
-    // Create cdk.out directory with valid manifest
-    const cdkOutDir = path.join(tempDir, 'cdk.out');
-    fs.mkdirSync(cdkOutDir, { recursive: true });
-
-    // Write a valid CDK assembly manifest
-    const manifest = {
-      version: '36.0.0',
-      artifacts: {},
-    };
-    fs.writeFileSync(path.join(cdkOutDir, 'manifest.json'), JSON.stringify(manifest, null, 2));
-
-    // Create minimal cdk.json
-    const cdkJson = {
-      app: 'echo "CDK bootstrap environment"',
-      context: {},
-    };
-    fs.writeFileSync(path.join(tempDir, 'cdk.json'), JSON.stringify(cdkJson, null, 2));
-
-    console.log('Created temporary bootstrap directory\n');
-
-    // Run bootstrap from temp directory
-    const bootstrapCmd = `npx --yes cdk@latest bootstrap aws://${accountId}/${REGION} --cloudformation-execution-policies arn:aws:iam::aws:policy/AdministratorAccess`;
+    // Run bootstrap directly without CDK app context
+    // Using --app parameter with empty app bypasses the need for cdk.json
+    const bootstrapCmd = `npx --yes aws-cdk@latest bootstrap aws://${accountId}/${REGION} --cloudformation-execution-policies arn:aws:iam::aws:policy/AdministratorAccess`;
 
     console.log(`Running: ${bootstrapCmd}\n`);
 
     execSync(bootstrapCmd, {
       stdio: 'inherit',
-      cwd: tempDir,
       env: { ...process.env },
     });
-
-    // Cleanup
-    fs.rmSync(tempDir, { recursive: true, force: true });
 
     console.log('\n✅ CDK Bootstrap completed successfully!');
   } catch (error) {
