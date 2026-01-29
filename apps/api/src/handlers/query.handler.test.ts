@@ -107,13 +107,17 @@ describe('Query Handler', () => {
     similarity: number,
     content: string,
     page?: number,
+    workspaceId?: string,
   ) {
     return {
       chunkId,
       documentId: 'doc-123',
       content,
       similarity_score: similarity,
-      metadata: page ? { page } : {},
+      metadata: {
+        ...(page ? { page } : {}),
+        ...(workspaceId ? { workspaceId } : {}),
+      },
     };
   }
 
@@ -251,23 +255,44 @@ describe('Query Handler', () => {
       expect(mockBedrockSend).toHaveBeenCalled();
     });
 
-    it('should filter by documentId when provided', async () => {
+    it('should filter by workspaceId when provided', async () => {
       const question = 'Test question';
-      const documentId = 'doc-specific';
-      const event = createEvent({ question, documentId });
+      const workspaceId = 'workspace-specific';
+      const event = createEvent({ question, workspaceId });
 
       mockEmbeddingService.embedText.mockResolvedValue(new Array(1024).fill(0.5));
 
-      // Return results for multiple documents
+      // Return results for multiple workspaces
       const searchResults = [
         {
-          ...createSearchResult('chunk-1', 0.9, 'Content 1'),
-          documentId: 'doc-specific',
+          ...createSearchResult(
+            'chunk-1',
+            0.9,
+            'Content 1',
+            undefined,
+            'workspace-specific',
+          ),
+          documentId: 'doc-1',
         },
-        { ...createSearchResult('chunk-2', 0.85, 'Content 2'), documentId: 'doc-other' },
         {
-          ...createSearchResult('chunk-3', 0.8, 'Content 3'),
-          documentId: 'doc-specific',
+          ...createSearchResult(
+            'chunk-2',
+            0.85,
+            'Content 2',
+            undefined,
+            'workspace-other',
+          ),
+          documentId: 'doc-2',
+        },
+        {
+          ...createSearchResult(
+            'chunk-3',
+            0.8,
+            'Content 3',
+            undefined,
+            'workspace-specific',
+          ),
+          documentId: 'doc-3',
         },
       ];
       mockVectorStoreService.hybridSearch.mockResolvedValue(searchResults);
@@ -285,7 +310,7 @@ describe('Query Handler', () => {
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.body);
 
-      // Should only have 2 sources from doc-specific
+      // Should only have 2 sources from workspace-specific
       expect(body.sources).toHaveLength(2);
       expect(body.sources.every((s: any) => s.id.startsWith('S'))).toBe(true);
     });
@@ -316,14 +341,20 @@ describe('Query Handler', () => {
       expect(mockBedrockSend).not.toHaveBeenCalled();
     });
 
-    it('should return message when no chunks match documentId filter', async () => {
+    it('should return message when no chunks match workspaceId filter', async () => {
       const question = 'Test question';
-      const event = createEvent({ question, documentId: 'non-existent-doc' });
+      const event = createEvent({ question, workspaceId: 'non-existent-workspace' });
 
       mockEmbeddingService.embedText.mockResolvedValue(new Array(1024).fill(0.5));
 
       const searchResults = [
-        createSearchResult('chunk-1', 0.9, 'Content from other doc'),
+        createSearchResult(
+          'chunk-1',
+          0.9,
+          'Content from other workspace',
+          undefined,
+          'workspace-other',
+        ),
       ];
       mockVectorStoreService.hybridSearch.mockResolvedValue(searchResults);
 
