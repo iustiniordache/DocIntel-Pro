@@ -64,10 +64,10 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       }
 
       // Auto-select first workspace if none selected
-      if (data.length > 0) {
-        setSelectedWorkspace(data[0]!);
+      if (data.length > 0 && data[0]) {
+        setSelectedWorkspace(data[0]);
         if (typeof window !== 'undefined') {
-          localStorage.setItem('selected_workspace', data[0]!.workspaceId);
+          localStorage.setItem('selected_workspace', data[0].workspaceId);
         }
       }
     } catch (error) {
