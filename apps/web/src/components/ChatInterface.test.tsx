@@ -47,7 +47,7 @@ describe('ChatInterface', () => {
     const input = screen.getByPlaceholderText(
       /ask a question about your documents/i,
     ) as HTMLInputElement;
-    const submitButton = screen.getByRole('button', { type: 'submit' });
+    const submitButton = screen.getByRole('button');
 
     fireEvent.change(input, { target: { value: 'What is this document about?' } });
     fireEvent.click(submitButton);
@@ -87,7 +87,7 @@ describe('ChatInterface', () => {
     const input = screen.getByPlaceholderText(
       /ask a question about your documents/i,
     ) as HTMLInputElement;
-    const submitButton = screen.getByRole('button', { type: 'submit' });
+    const submitButton = screen.getByRole('button');
 
     fireEvent.change(input, { target: { value: '   ' } });
     fireEvent.click(submitButton);

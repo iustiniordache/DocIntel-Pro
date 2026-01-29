@@ -35,8 +35,10 @@ describe('useQuery', () => {
       answer: 'This is the answer',
       sources: [
         {
+          chunkId: 'chunk-1',
           documentId: 'doc-1',
-          documentName: 'test.pdf',
+          similarity: 0.95,
+          content: 'Test content',
           pageNumber: 1,
           score: 0.95,
           excerpt: 'Test excerpt',

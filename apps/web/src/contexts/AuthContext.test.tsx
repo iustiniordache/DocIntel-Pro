@@ -39,8 +39,9 @@ describe('AuthContext', () => {
     };
 
     const mockUser = {
+      userId: 'user-123',
       email: 'test@example.com',
-      sub: 'user-123',
+      emailVerified: true,
     };
 
     vi.mocked(auth.signIn).mockResolvedValue(mockTokens);
@@ -60,7 +61,10 @@ describe('AuthContext', () => {
   });
 
   it('should handle registration', async () => {
-    vi.mocked(auth.signUp).mockResolvedValue({ userSub: 'user-123' });
+    vi.mocked(auth.signUp).mockResolvedValue({
+      userSub: 'user-123',
+      username: 'test_user',
+    });
 
     const { result } = renderHook(() => useAuth(), { wrapper });
 
@@ -96,8 +100,9 @@ describe('AuthContext', () => {
     };
 
     const mockUser = {
+      userId: 'user-123',
       email: 'stored@example.com',
-      sub: 'user-123',
+      emailVerified: true,
     };
 
     vi.mocked(auth.tokenStorage.get).mockReturnValue(mockTokens);
@@ -125,8 +130,9 @@ describe('AuthContext', () => {
 
     vi.mocked(auth.signIn).mockResolvedValue(mockTokens);
     vi.mocked(auth.getCurrentUser).mockResolvedValue({
+      userId: 'user-123',
       email: 'test@example.com',
-      sub: 'user-123',
+      emailVerified: true,
     });
     vi.mocked(auth.tokenStorage.save).mockImplementation(() => {});
     vi.mocked(auth.refreshTokens).mockResolvedValue(mockTokens);
