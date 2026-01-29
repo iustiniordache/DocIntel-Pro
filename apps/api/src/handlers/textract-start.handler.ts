@@ -438,7 +438,7 @@ async function processRecord(record: S3EventRecord, requestId: string): Promise<
 
   if (queryResult.Items && queryResult.Items.length > 0) {
     // Document already exists (created by upload handler)
-    const existingDoc = unmarshall(queryResult.Items[0]!);
+    const existingDoc = unmarshall(queryResult.Items[0]);
     documentId = existingDoc['documentId'] as string;
 
     logger.info(

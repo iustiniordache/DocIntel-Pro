@@ -111,7 +111,7 @@ export const handler = async (
       };
     }
 
-    const workspace = unmarshall(queryResult.Items[0]!) as Workspace;
+    const workspace = unmarshall(queryResult.Items[0]) as Workspace;
 
     // Verify ownership
     if (workspace.ownerId !== userId) {
@@ -129,7 +129,7 @@ export const handler = async (
     // Build update expression
     const updateExpressions: string[] = [];
     const expressionAttributeNames: Record<string, string> = {};
-    const expressionAttributeValues: Record<string, any> = {};
+    const expressionAttributeValues: Record<string, AttributeValue> = {};
 
     if (body.name) {
       updateExpressions.push('#name = :name');

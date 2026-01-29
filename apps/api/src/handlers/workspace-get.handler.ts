@@ -81,7 +81,7 @@ export const handler = async (
       };
     }
 
-    const workspace = unmarshall(result.Items[0]!) as Workspace;
+    const workspace = unmarshall(result.Items[0]) as Workspace;
 
     // Verify ownership
     if (workspace.ownerId !== userId) {

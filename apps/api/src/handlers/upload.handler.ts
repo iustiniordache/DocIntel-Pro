@@ -451,7 +451,7 @@ export async function handler(
       );
     }
 
-    const workspace = workspaceCheck.Items[0]!;
+    const workspace = workspaceCheck.Items[0];
     if (workspace['ownerId']?.S !== userId) {
       return errorResponse(
         403,

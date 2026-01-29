@@ -106,7 +106,7 @@ async function fetchDocuments(userId: string, workspaceId?: string): Promise<Doc
     return [];
   }
 
-  const workspace = unmarshall(workspaceCheck.Items[0]!);
+  const workspace = unmarshall(workspaceCheck.Items[0]);
   if (workspace['ownerId'] !== userId) {
     // User doesn't own this workspace
     return [];
