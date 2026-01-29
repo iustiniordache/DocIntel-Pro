@@ -106,13 +106,4 @@ describe('DocumentManagement', () => {
       expect(apiClient.listDocuments).toHaveBeenCalled();
     });
   });
-
-  it('should accept onDocumentSelect prop', async () => {
-    const onDocumentSelect = vi.fn();
-    render(<DocumentManagement onDocumentSelect={onDocumentSelect} />);
-
-    await waitFor(() => {
-      expect(apiClient.listDocuments).toHaveBeenCalled();
-    });
-  });
 });

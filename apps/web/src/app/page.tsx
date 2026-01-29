@@ -5,7 +5,7 @@
  * Integrates FileUpload, ChatInterface, and DocumentManagement components
  */
 
-import { useState, useRef } from 'react';
+import { useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { AuthForm } from '@/components/AuthForm';
 import { WorkspaceSelector } from '@/components/WorkspaceSelector';
@@ -20,7 +20,6 @@ import { LogOut, Loader2 } from 'lucide-react';
 
 export default function HomePage() {
   const { user, isAuthenticated, isLoading, logout } = useAuth();
-  const [selectedDocumentId, setSelectedDocumentId] = useState<string | undefined>();
   const documentManagementRef = useRef<DocumentManagementRef>(null);
 
   // Show loading state
@@ -68,8 +67,7 @@ export default function HomePage() {
             <WorkspaceSelector />
 
             <FileUpload
-              onUploadComplete={(documentId: string) => {
-                setSelectedDocumentId(documentId);
+              onUploadComplete={() => {
                 // Refresh document list after upload
                 documentManagementRef.current?.refresh();
               }}
@@ -78,24 +76,12 @@ export default function HomePage() {
               }}
             />
 
-            <DocumentManagement
-              ref={documentManagementRef}
-              onDocumentSelect={(documentId: string) => {
-                setSelectedDocumentId(documentId);
-              }}
-            />
+            <DocumentManagement ref={documentManagementRef} />
           </div>
 
           {/* Right Column: Chat */}
           <div className="lg:sticky lg:top-8 lg:self-start">
-            <ChatInterface
-              documentId={selectedDocumentId}
-              placeholder={
-                selectedDocumentId
-                  ? 'Ask a question about this document...'
-                  : 'Ask a question about all your documents...'
-              }
-            />
+            <ChatInterface placeholder="Ask a question about all your documents..." />
           </div>
         </div>
       </div>

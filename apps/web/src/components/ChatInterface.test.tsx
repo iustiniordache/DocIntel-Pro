@@ -53,10 +53,7 @@ describe('ChatInterface', () => {
     fireEvent.click(submitButton);
 
     await waitFor(() => {
-      expect(mockSendMessage).toHaveBeenCalledWith(
-        'What is this document about?',
-        undefined,
-      );
+      expect(mockSendMessage).toHaveBeenCalledWith('What is this document about?');
     });
   });
 
@@ -115,25 +112,6 @@ describe('ChatInterface', () => {
     render(<ChatInterface placeholder="Custom placeholder text" />);
 
     expect(screen.getByPlaceholderText('Custom placeholder text')).toBeInTheDocument();
-  });
-
-  it('should pass documentId to sendMessage', async () => {
-    mockSendMessage.mockResolvedValue(undefined);
-    render(<ChatInterface documentId="doc-123" />);
-
-    const input = screen.getByPlaceholderText(
-      /ask a question about/i,
-    ) as HTMLInputElement;
-
-    fireEvent.change(input, { target: { value: 'Test question' } });
-    const form = input.closest('form');
-    if (form) {
-      fireEvent.submit(form);
-    }
-
-    await waitFor(() => {
-      expect(mockSendMessage).toHaveBeenCalledWith('Test question', 'doc-123');
-    });
   });
 
   it('should show clear button when messages exist', () => {
