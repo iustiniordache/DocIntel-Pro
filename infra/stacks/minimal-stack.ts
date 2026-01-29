@@ -12,6 +12,7 @@ import * as opensearch from 'aws-cdk-lib/aws-opensearchservice';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as cr from 'aws-cdk-lib/custom-resources';
 import * as logs from 'aws-cdk-lib/aws-logs';
+import * as cognito from 'aws-cdk-lib/aws-cognito';
 import { Construct } from 'constructs';
 import * as path from 'path';
 
@@ -59,16 +60,97 @@ export class MinimalStack extends cdk.Stack {
     });
 
     // ==========================================
-    // 2. DYNAMODB TABLES (2)
+    // 2. COGNITO USER POOL (Authentication)
     // ==========================================
+    const userPool = new cognito.UserPool(this, 'UserPool', {
+      userPoolName: 'DocIntel-UserPool',
+      selfSignUpEnabled: true,
+      signInAliases: {
+        email: true,
+        username: true,
+      },
+      autoVerify: {
+        email: true,
+      },
+      standardAttributes: {
+        email: {
+          required: true,
+          mutable: true,
+        },
+        givenName: {
+          required: false,
+          mutable: true,
+        },
+        familyName: {
+          required: false,
+          mutable: true,
+        },
+      },
+      passwordPolicy: {
+        minLength: 8,
+        requireLowercase: true,
+        requireUppercase: true,
+        requireDigits: true,
+        requireSymbols: true,
+      },
+      accountRecovery: cognito.AccountRecovery.EMAIL_ONLY,
+      removalPolicy: cdk.RemovalPolicy.DESTROY, // Dev only
+    });
+
+    // User Pool Client for web app
+    const userPoolClient = new cognito.UserPoolClient(this, 'UserPoolClient', {
+      userPool,
+      userPoolClientName: 'DocIntel-WebClient',
+      authFlows: {
+        userPassword: true,
+        userSrp: true,
+      },
+      generateSecret: false, // Public client (web/mobile)
+      preventUserExistenceErrors: true,
+      refreshTokenValidity: cdk.Duration.days(30),
+      accessTokenValidity: cdk.Duration.hours(1),
+      idTokenValidity: cdk.Duration.hours(1),
+    });
+
+    // ==========================================
+    // 3. DYNAMODB TABLES
+    // ==========================================
+    // Documents table - restructured with workspaceId as PK
     const metadataTable = new dynamodb.Table(this, 'DocumentMetadataTable', {
-      tableName: 'DocIntel-DocumentMetadata',
-      partitionKey: { name: 'documentId', type: dynamodb.AttributeType.STRING },
+      tableName: 'DocIntel-DocumentMetadata-v2',
+      partitionKey: { name: 'workspaceId', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'documentId', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       removalPolicy: cdk.RemovalPolicy.DESTROY, // Dev only
       pointInTimeRecovery: false, // Dev only (enable for prod)
     });
 
+    // Add GSI for querying documents by userId
+    metadataTable.addGlobalSecondaryIndex({
+      indexName: 'UserIdIndex',
+      partitionKey: { name: 'userId', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'createdAt', type: dynamodb.AttributeType.STRING },
+      projectionType: dynamodb.ProjectionType.ALL,
+    });
+
+    // Workspaces table
+    const workspacesTable = new dynamodb.Table(this, 'WorkspacesTable', {
+      tableName: 'DocIntel-Workspaces',
+      partitionKey: { name: 'ownerId', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'workspaceId', type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: cdk.RemovalPolicy.DESTROY, // Dev only
+      pointInTimeRecovery: false, // Dev only (enable for prod)
+    });
+
+    // Add GSI for querying workspace by ID directly
+    workspacesTable.addGlobalSecondaryIndex({
+      indexName: 'WorkspaceIdIndex',
+      partitionKey: { name: 'workspaceId', type: dynamodb.AttributeType.STRING },
+      projectionType: dynamodb.ProjectionType.ALL,
+    });
+
+    // Jobs table (unchanged structure)
     const jobsTable = new dynamodb.Table(this, 'ProcessingJobsTable', {
       tableName: 'DocIntel-ProcessingJobs',
       partitionKey: { name: 'jobId', type: dynamodb.AttributeType.STRING },
@@ -85,7 +167,7 @@ export class MinimalStack extends cdk.Stack {
     });
 
     // ==========================================
-    // 3. SNS TOPIC (Textract completion notifications)
+    // 4. SNS TOPIC (Textract completion notifications)
     // ==========================================
     const textractCompletionTopic = new sns.Topic(this, 'TextractCompletionTopic', {
       topicName: 'DocIntel-TextractCompletion',
@@ -103,7 +185,7 @@ export class MinimalStack extends cdk.Stack {
     );
 
     // ==========================================
-    // 4. OPENSEARCH DOMAIN (DEV OPTIMIZED - ~$20/month)
+    // 5. OPENSEARCH DOMAIN (DEV OPTIMIZED - ~$20/month)
     // ==========================================
     // Production notes:
     // - Use 3 nodes (t3.medium.search) across 3 AZs
@@ -167,7 +249,7 @@ export class MinimalStack extends cdk.Stack {
     });
 
     // ==========================================
-    // 5. LAMBDA 1: UploadHandler (API Gateway)
+    // 6. LAMBDA 1: UploadHandler (API Gateway)
     // ==========================================
     const uploadHandler = new lambda.Function(this, 'UploadHandler', {
       functionName: 'DocIntel-UploadHandler',
@@ -183,6 +265,7 @@ export class MinimalStack extends cdk.Stack {
         S3_PRESIGNED_URL_EXPIRY: '300',
         DYNAMODB_METADATA_TABLE: metadataTable.tableName,
         DYNAMODB_JOBS_TABLE: jobsTable.tableName,
+        DYNAMODB_WORKSPACES_TABLE: workspacesTable.tableName,
         LOG_LEVEL: 'info',
       },
     });
@@ -191,9 +274,95 @@ export class MinimalStack extends cdk.Stack {
     documentsBucket.grantPut(uploadHandler);
     documentsBucket.grantRead(uploadHandler);
     metadataTable.grantWriteData(uploadHandler);
+    workspacesTable.grantReadData(uploadHandler);
 
     // ==========================================
-    // 5. LAMBDA 2: TextractStartHandler (S3 trigger)
+    // 7. WORKSPACE CRUD LAMBDA FUNCTIONS
+    // ==========================================
+    // Create Workspace Handler
+    const createWorkspaceHandler = new lambda.Function(this, 'CreateWorkspaceHandler', {
+      functionName: 'DocIntel-CreateWorkspaceHandler',
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'workspace-create.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, '../../apps/api/build/handlers')),
+      memorySize: 256,
+      timeout: cdk.Duration.seconds(10),
+      environment: {
+        NODE_ENV: 'production',
+        DYNAMODB_WORKSPACES_TABLE: workspacesTable.tableName,
+        LOG_LEVEL: 'info',
+      },
+    });
+    workspacesTable.grantWriteData(createWorkspaceHandler);
+
+    // List Workspaces Handler
+    const listWorkspacesHandler = new lambda.Function(this, 'ListWorkspacesHandler', {
+      functionName: 'DocIntel-ListWorkspacesHandler',
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'workspace-list.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, '../../apps/api/build/handlers')),
+      memorySize: 256,
+      timeout: cdk.Duration.seconds(10),
+      environment: {
+        NODE_ENV: 'production',
+        DYNAMODB_WORKSPACES_TABLE: workspacesTable.tableName,
+        LOG_LEVEL: 'info',
+      },
+    });
+    workspacesTable.grantReadData(listWorkspacesHandler);
+
+    // Get Workspace Handler
+    const getWorkspaceHandler = new lambda.Function(this, 'GetWorkspaceHandler', {
+      functionName: 'DocIntel-GetWorkspaceHandler',
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'workspace-get.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, '../../apps/api/build/handlers')),
+      memorySize: 256,
+      timeout: cdk.Duration.seconds(10),
+      environment: {
+        NODE_ENV: 'production',
+        DYNAMODB_WORKSPACES_TABLE: workspacesTable.tableName,
+        LOG_LEVEL: 'info',
+      },
+    });
+    workspacesTable.grantReadData(getWorkspaceHandler);
+
+    // Update Workspace Handler
+    const updateWorkspaceHandler = new lambda.Function(this, 'UpdateWorkspaceHandler', {
+      functionName: 'DocIntel-UpdateWorkspaceHandler',
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'workspace-update.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, '../../apps/api/build/handlers')),
+      memorySize: 256,
+      timeout: cdk.Duration.seconds(10),
+      environment: {
+        NODE_ENV: 'production',
+        DYNAMODB_WORKSPACES_TABLE: workspacesTable.tableName,
+        LOG_LEVEL: 'info',
+      },
+    });
+    workspacesTable.grantReadWriteData(updateWorkspaceHandler);
+
+    // Delete Workspace Handler
+    const deleteWorkspaceHandler = new lambda.Function(this, 'DeleteWorkspaceHandler', {
+      functionName: 'DocIntel-DeleteWorkspaceHandler',
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'workspace-delete.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, '../../apps/api/build/handlers')),
+      memorySize: 256,
+      timeout: cdk.Duration.seconds(10),
+      environment: {
+        NODE_ENV: 'production',
+        DYNAMODB_WORKSPACES_TABLE: workspacesTable.tableName,
+        DYNAMODB_METADATA_TABLE: metadataTable.tableName,
+        LOG_LEVEL: 'info',
+      },
+    });
+    workspacesTable.grantReadWriteData(deleteWorkspaceHandler);
+    metadataTable.grantReadData(deleteWorkspaceHandler);
+
+    // ==========================================
+    // 8. LAMBDA 2: TextractStartHandler (S3 trigger)
     // ==========================================
 
     // Create a dedicated role for Textract service to publish SNS notifications
@@ -224,16 +393,14 @@ export class MinimalStack extends cdk.Stack {
 
     // Grant permissions
     documentsBucket.grantRead(textractStartHandler);
-    metadataTable.grantWriteData(textractStartHandler);
+    metadataTable.grantReadWriteData(textractStartHandler); // Need read to query by workspaceId+filename
     jobsTable.grantWriteData(textractStartHandler);
 
     // Add S3 trigger for ObjectCreated events
+    // Trigger on all uploads (no prefix filter) since we use userId/workspaceId/filename structure
     documentsBucket.addEventNotification(
       s3.EventType.OBJECT_CREATED,
       new s3n.LambdaDestination(textractStartHandler),
-      {
-        prefix: 'documents/',
-      },
     );
 
     // Grant Textract permissions
@@ -256,7 +423,7 @@ export class MinimalStack extends cdk.Stack {
     );
 
     // ==========================================
-    // 6. LAMBDA 3: TextractCompleteHandler (SNS trigger)
+    // 9. LAMBDA 3: TextractCompleteHandler (SNS trigger)
     // ==========================================
     // Create dedicated IAM role with OpenSearch permissions
     const textractCompleteRole = new iam.Role(this, 'TextractCompleteHandlerRole', {
@@ -349,7 +516,7 @@ export class MinimalStack extends cdk.Stack {
     );
 
     // ==========================================
-    // 8. LAMBDA 4: QueryHandler (API Gateway - RAG)
+    // 10. LAMBDA 4: QueryHandler (API Gateway - RAG)
     // ==========================================
     // Create dedicated IAM role with OpenSearch permissions
     const queryHandlerRole = new iam.Role(this, 'QueryHandlerRole', {
@@ -396,7 +563,7 @@ export class MinimalStack extends cdk.Stack {
     });
 
     // ==========================================
-    // 9. LAMBDA 5: DocumentsHandler (API Gateway - List Documents)
+    // 11. LAMBDA 5: DocumentsHandler (API Gateway - List Documents)
     // ==========================================
     const documentsHandler = new lambda.Function(this, 'DocumentsHandler', {
       functionName: 'DocIntel-DocumentsHandler',
@@ -409,12 +576,14 @@ export class MinimalStack extends cdk.Stack {
         NODE_ENV: 'production',
         AWS_ACCOUNT_ID: this.account,
         DYNAMODB_METADATA_TABLE: metadataTable.tableName,
+        DYNAMODB_WORKSPACES_TABLE: workspacesTable.tableName,
         LOG_LEVEL: 'info',
       },
     });
 
     // Grant DynamoDB read access to Documents Handler
     metadataTable.grantReadData(documentsHandler);
+    workspacesTable.grantReadData(documentsHandler);
 
     // Add Bedrock permissions to the QueryHandler role
     queryHandlerRole.addToPolicy(
@@ -479,7 +648,7 @@ export class MinimalStack extends cdk.Stack {
     );
 
     // ==========================================
-    // 9. API GATEWAY (REST)
+    // 12. API GATEWAY (REST) with Cognito Authorizer
     // ==========================================
 
     // CloudWatch Log Group for API Gateway Access Logs
@@ -528,27 +697,97 @@ export class MinimalStack extends cdk.Stack {
       cloudWatchRole: true,
     });
 
+    // Cognito User Pool Authorizer
+    const authorizer = new apigateway.CognitoUserPoolsAuthorizer(
+      this,
+      'CognitoAuthorizer',
+      {
+        cognitoUserPools: [userPool],
+        authorizerName: 'DocIntelCognitoAuthorizer',
+        identitySource: 'method.request.header.Authorization',
+      },
+    );
+
     // POST /upload endpoint
     const upload = api.root.addResource('upload');
     upload.addMethod('POST', new apigateway.LambdaIntegration(uploadHandler), {
-      apiKeyRequired: false,
+      authorizer,
+      authorizationType: apigateway.AuthorizationType.COGNITO,
     });
 
     // POST /query endpoint (RAG)
     const query = api.root.addResource('query');
     query.addMethod('POST', new apigateway.LambdaIntegration(queryHandler), {
-      apiKeyRequired: false,
+      authorizer,
+      authorizationType: apigateway.AuthorizationType.COGNITO,
     });
 
     // GET /documents endpoint (list documents with status)
     const documents = api.root.addResource('documents');
     documents.addMethod('GET', new apigateway.LambdaIntegration(documentsHandler), {
-      apiKeyRequired: false,
+      authorizer,
+      authorizationType: apigateway.AuthorizationType.COGNITO,
     });
 
+    // Workspace endpoints
+    const workspaces = api.root.addResource('workspaces');
+
+    // POST /workspaces - Create workspace
+    workspaces.addMethod(
+      'POST',
+      new apigateway.LambdaIntegration(createWorkspaceHandler),
+      {
+        authorizer,
+        authorizationType: apigateway.AuthorizationType.COGNITO,
+      },
+    );
+
+    // GET /workspaces - List workspaces
+    workspaces.addMethod('GET', new apigateway.LambdaIntegration(listWorkspacesHandler), {
+      authorizer,
+      authorizationType: apigateway.AuthorizationType.COGNITO,
+    });
+
+    // GET /workspaces/{workspaceId} - Get workspace
+    const workspace = workspaces.addResource('{workspaceId}');
+    workspace.addMethod('GET', new apigateway.LambdaIntegration(getWorkspaceHandler), {
+      authorizer,
+      authorizationType: apigateway.AuthorizationType.COGNITO,
+    });
+
+    // PUT /workspaces/{workspaceId} - Update workspace
+    workspace.addMethod('PUT', new apigateway.LambdaIntegration(updateWorkspaceHandler), {
+      authorizer,
+      authorizationType: apigateway.AuthorizationType.COGNITO,
+    });
+
+    // DELETE /workspaces/{workspaceId} - Delete workspace
+    workspace.addMethod(
+      'DELETE',
+      new apigateway.LambdaIntegration(deleteWorkspaceHandler),
+      {
+        authorizer,
+        authorizationType: apigateway.AuthorizationType.COGNITO,
+      },
+    );
+
     // ==========================================
-    // 10. OUTPUTS
+    // 13. OUTPUTS
     // ==========================================
+    // Cognito outputs
+    new cdk.CfnOutput(this, 'UserPoolId', {
+      value: userPool.userPoolId,
+      description: 'Cognito User Pool ID',
+      exportName: 'DocIntelUserPoolId',
+    });
+
+    new cdk.CfnOutput(this, 'UserPoolClientId', {
+      value: userPoolClient.userPoolClientId,
+      description: 'Cognito User Pool Client ID',
+      exportName: 'DocIntelUserPoolClientId',
+    });
+
+    // API outputs
     new cdk.CfnOutput(this, 'ApiEndpoint', {
       value: api.url,
       description: 'API Gateway endpoint URL',
@@ -573,16 +812,30 @@ export class MinimalStack extends cdk.Stack {
       exportName: 'DocIntelDocumentsEndpoint',
     });
 
+    new cdk.CfnOutput(this, 'WorkspacesEndpoint', {
+      value: `${api.url}workspaces`,
+      description: 'Workspaces endpoint URL - CRUD operations',
+      exportName: 'DocIntelWorkspacesEndpoint',
+    });
+
+    // Storage outputs
     new cdk.CfnOutput(this, 'DocumentsBucketName', {
       value: documentsBucket.bucketName,
       description: 'S3 bucket for document uploads',
       exportName: 'DocIntelDocumentsBucket',
     });
 
+    // DynamoDB outputs
     new cdk.CfnOutput(this, 'MetadataTableName', {
       value: metadataTable.tableName,
       description: 'DynamoDB metadata table',
       exportName: 'DocIntelMetadataTable',
+    });
+
+    new cdk.CfnOutput(this, 'WorkspacesTableName', {
+      value: workspacesTable.tableName,
+      description: 'DynamoDB workspaces table',
+      exportName: 'DocIntelWorkspacesTable',
     });
 
     new cdk.CfnOutput(this, 'JobsTableName', {

@@ -625,6 +625,7 @@ async function updateJobStatus(
  * Update document metadata
  */
 async function updateDocumentMetadata(
+  workspaceId: string,
   documentId: string,
   status: string,
   pageCount: number,
@@ -634,7 +635,7 @@ async function updateDocumentMetadata(
 
     const params: UpdateItemCommandInput = {
       TableName: CONFIG.dynamodb.metadataTable,
-      Key: marshall({ documentId }),
+      Key: marshall({ workspaceId, documentId }),
       UpdateExpression:
         'SET #status = :status, pageCount = :pageCount, textractCost = :cost, processedAt = :processedAt',
       ExpressionAttributeNames: {
@@ -650,11 +651,14 @@ async function updateDocumentMetadata(
 
     await dynamoClient.send(new UpdateItemCommand(params));
     logger.info(
-      { documentId, status, pageCount, textractCost },
+      { workspaceId, documentId, status, pageCount, textractCost },
       'Document metadata updated',
     );
   } catch (error) {
-    logger.error({ error, documentId, status }, 'Failed to update document metadata');
+    logger.error(
+      { error, workspaceId, documentId, status },
+      'Failed to update document metadata',
+    );
     throw error;
   }
 }
@@ -725,7 +729,14 @@ async function processRecord(record: SNSEventRecord, requestId: string): Promise
     return;
   }
 
-  const { jobId, documentId } = job;
+  const { jobId, documentId, s3Key } = job;
+
+  // Extract workspaceId from s3Key (format: userId/workspaceId/filename)
+  const workspaceId = s3Key.split('/')[1];
+  if (!workspaceId) {
+    logger.error({ s3Key, documentId }, 'Could not extract workspaceId from s3Key');
+    throw new Error('Invalid s3Key format - missing workspaceId');
+  }
 
   try {
     // Handle non-success status
@@ -736,7 +747,12 @@ async function processRecord(record: SNSEventRecord, requestId: string): Promise
       );
 
       await updateJobStatus(jobId, JobStatus.FAILED_TEXTRACT);
-      await updateDocumentMetadata(documentId, DocumentStatus.FAILED_TEXTRACT, 0);
+      await updateDocumentMetadata(
+        workspaceId,
+        documentId,
+        DocumentStatus.FAILED_TEXTRACT,
+        0,
+      );
 
       return;
     }
@@ -813,7 +829,12 @@ async function processRecord(record: SNSEventRecord, requestId: string): Promise
 
     // Update statuses
     await updateJobStatus(jobId, JobStatus.COMPLETED, parsed.pageCount);
-    await updateDocumentMetadata(documentId, DocumentStatus.PROCESSED, parsed.pageCount);
+    await updateDocumentMetadata(
+      workspaceId,
+      documentId,
+      DocumentStatus.PROCESSED,
+      parsed.pageCount,
+    );
 
     logger.info(
       { documentId, jobId, pageCount: parsed.pageCount },
@@ -828,6 +849,7 @@ async function processRecord(record: SNSEventRecord, requestId: string): Promise
     // Mark as failed
     await updateJobStatus(jobId, JobStatus.FAILED_TEXTRACT_PROCESSING);
     await updateDocumentMetadata(
+      workspaceId,
       documentId,
       DocumentStatus.FAILED_TEXTRACT_PROCESSING,
       0,

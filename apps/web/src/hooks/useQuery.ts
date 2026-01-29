@@ -6,6 +6,7 @@
 
 import { useState, useCallback } from 'react';
 import { sendQuery, type QueryRequest, type QueryResponse } from '../lib/api-client';
+import { useAuth } from '../contexts/AuthContext';
 
 export interface QueryState {
   isLoading: boolean;
@@ -31,6 +32,7 @@ export interface UseQueryReturn {
 }
 
 export function useQuery(): UseQueryReturn {
+  const { getIdToken } = useAuth();
   const [queryState, setQueryState] = useState<QueryState>({
     isLoading: false,
     error: null,
@@ -96,7 +98,8 @@ export function useQuery(): UseQueryReturn {
           ...(documentId && { documentId }),
         };
 
-        const response = await sendQuery(request);
+        const idToken = await getIdToken();
+        const response = await sendQuery(request, idToken);
 
         // Add assistant message
         const assistantMessage: Message = {

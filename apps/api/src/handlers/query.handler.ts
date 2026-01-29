@@ -16,7 +16,7 @@
  *                             → Bedrock Claude → Response
  */
 
-import { APIGatewayProxyEventV2, APIGatewayProxyResultV2, Context } from 'aws-lambda';
+import { APIGatewayProxyEvent, APIGatewayProxyResult, Context } from 'aws-lambda';
 import {
   BedrockRuntimeClient,
   InvokeModelCommand,
@@ -302,7 +302,7 @@ function formatSources(chunks: SearchResult[]): Source[] {
 /**
  * Create error response
  */
-function errorResponse(statusCode: number, message: string): APIGatewayProxyResultV2 {
+function errorResponse(statusCode: number, message: string): APIGatewayProxyResult {
   logger.error({
     msg: 'Error response',
     statusCode,
@@ -324,7 +324,7 @@ function errorResponse(statusCode: number, message: string): APIGatewayProxyResu
 /**
  * Create success response
  */
-function successResponse(data: QueryResponse): APIGatewayProxyResultV2 {
+function successResponse(data: QueryResponse): APIGatewayProxyResult {
   return {
     statusCode: 200,
     headers: {
@@ -339,9 +339,9 @@ function successResponse(data: QueryResponse): APIGatewayProxyResultV2 {
  * Main handler function
  */
 export async function handler(
-  event: APIGatewayProxyEventV2,
+  event: APIGatewayProxyEvent,
   context: Context,
-): Promise<APIGatewayProxyResultV2> {
+): Promise<APIGatewayProxyResult> {
   const requestId = context.awsRequestId;
 
   logger.info({

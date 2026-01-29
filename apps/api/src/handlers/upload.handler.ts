@@ -28,13 +28,14 @@
  * ```
  */
 
-import { APIGatewayProxyEventV2, APIGatewayProxyResultV2, Context } from 'aws-lambda';
+import { APIGatewayProxyEvent, APIGatewayProxyResult, Context } from 'aws-lambda';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import {
   DynamoDBClient,
   PutItemCommand,
   PutItemCommandInput,
+  QueryCommand,
 } from '@aws-sdk/client-dynamodb';
 import { marshall } from '@aws-sdk/util-dynamodb';
 import { randomUUID } from 'crypto';
@@ -43,6 +44,7 @@ import pino from 'pino';
 // Import types from shared package
 interface UploadRequestBody {
   filename: string;
+  workspaceId: string;
   contentType?: string;
 }
 
@@ -55,11 +57,14 @@ interface UploadResponse {
 
 interface DocumentMetadata {
   documentId: string;
+  workspaceId: string;
+  userId: string;
   filename: string;
   s3Key: string;
   status: string;
   uploadDate: string;
   contentType?: string;
+  createdAt: string;
 }
 
 interface UploadError {
@@ -94,6 +99,7 @@ const CONFIG = {
   dynamodb: {
     metadataTable: process.env['DYNAMODB_METADATA_TABLE'] || '',
     jobsTable: process.env['DYNAMODB_JOBS_TABLE'] || '',
+    workspacesTable: process.env['DYNAMODB_WORKSPACES_TABLE'] || '',
   },
   logging: {
     level: process.env['LOG_LEVEL'] || 'info',
@@ -200,7 +206,7 @@ function validateRequestBody(body: unknown): {
     };
   }
 
-  const { filename, contentType } = body as Partial<UploadRequestBody>;
+  const { filename, workspaceId, contentType } = body as Partial<UploadRequestBody>;
 
   if (!filename || typeof filename !== 'string') {
     return {
@@ -208,6 +214,16 @@ function validateRequestBody(body: unknown): {
       error: {
         error: 'INVALID_FILENAME',
         message: 'Filename is required and must be a string',
+      },
+    };
+  }
+
+  if (!workspaceId || typeof workspaceId !== 'string') {
+    return {
+      isValid: false,
+      error: {
+        error: 'INVALID_WORKSPACE',
+        message: 'Workspace ID is required and must be a string',
       },
     };
   }
@@ -234,7 +250,7 @@ function validateRequestBody(body: unknown): {
 
   return {
     isValid: true,
-    data: { filename, contentType: contentType || ALLOWED_CONTENT_TYPE },
+    data: { filename, workspaceId, contentType: contentType || ALLOWED_CONTENT_TYPE },
   };
 }
 
@@ -256,14 +272,17 @@ async function saveDocumentMetadata(metadata: DocumentMetadata): Promise<void> {
 
 /**
  * Generate presigned URL for S3 upload
+ * New structure: /<userId>/<workspaceId>/<filename>
  */
 async function generatePresignedUrl(
+  userId: string,
+  workspaceId: string,
   documentId: string,
   filename: string,
   contentType: string,
 ): Promise<{ uploadUrl: string; s3Key: string }> {
   const sanitizedFilename = sanitizeFilename(filename);
-  const s3Key = `documents/${documentId}/${sanitizedFilename}`;
+  const s3Key = `${userId}/${workspaceId}/${sanitizedFilename}`;
 
   const command = new PutObjectCommand({
     Bucket: CONFIG.s3.documentsBucket,
@@ -271,6 +290,8 @@ async function generatePresignedUrl(
     ContentType: contentType,
     Metadata: {
       documentId,
+      userId,
+      workspaceId,
       originalFilename: filename,
     },
   });
@@ -294,7 +315,7 @@ function errorResponse(
   statusCode: number,
   error: UploadError,
   requestId: string,
-): APIGatewayProxyResultV2 {
+): APIGatewayProxyResult {
   logger.error({ statusCode, error, requestId }, 'Request failed');
 
   return {
@@ -311,10 +332,7 @@ function errorResponse(
 /**
  * Create success response
  */
-function successResponse(
-  data: UploadResponse,
-  requestId: string,
-): APIGatewayProxyResultV2 {
+function successResponse(data: UploadResponse, requestId: string): APIGatewayProxyResult {
   return {
     statusCode: 200,
     headers: {
@@ -330,9 +348,9 @@ function successResponse(
  * Main Lambda handler
  */
 export async function handler(
-  event: APIGatewayProxyEventV2,
+  event: APIGatewayProxyEvent,
   context: Context,
-): Promise<APIGatewayProxyResultV2> {
+): Promise<APIGatewayProxyResult> {
   // Initialize services on first invocation (Lambda warm start optimization)
   await initializeServices();
 
@@ -341,16 +359,29 @@ export async function handler(
   logger.info(
     {
       requestId,
-      method: event.requestContext?.http?.method || 'UNKNOWN',
-      path: event.requestContext?.http?.path || 'UNKNOWN',
+      method: event.httpMethod || 'UNKNOWN',
+      path: event.path || 'UNKNOWN',
     },
     'Processing upload request',
   );
 
   try {
-    // Rate limiting (using source IP as client ID)
-    const clientId = event.requestContext?.http?.sourceIp || 'unknown';
-    if (!checkRateLimit(clientId)) {
+    // Extract user ID from Cognito authorizer
+    const userId = event.requestContext?.authorizer?.['claims']?.['sub'] as string;
+    if (!userId) {
+      return errorResponse(
+        401,
+        {
+          error: 'UNAUTHORIZED',
+          message: 'User not authenticated',
+          code: '401',
+        },
+        requestId,
+      );
+    }
+
+    // Rate limiting (using user ID as client ID)
+    if (!checkRateLimit(userId)) {
       return errorResponse(
         429,
         {
@@ -394,26 +425,68 @@ export async function handler(
       );
     }
 
-    const { filename, contentType } = validation.data;
+    const { filename, workspaceId, contentType } = validation.data;
+
+    // Verify workspace ownership
+    const workspaceCheck = await dynamoClient.send(
+      new QueryCommand({
+        TableName: CONFIG.dynamodb.workspacesTable,
+        IndexName: 'WorkspaceIdIndex',
+        KeyConditionExpression: 'workspaceId = :workspaceId',
+        ExpressionAttributeValues: {
+          ':workspaceId': { S: workspaceId },
+        },
+      }),
+    );
+
+    if (!workspaceCheck.Items || workspaceCheck.Items.length === 0) {
+      return errorResponse(
+        404,
+        {
+          error: 'WORKSPACE_NOT_FOUND',
+          message: 'Workspace not found',
+          code: '404',
+        },
+        requestId,
+      );
+    }
+
+    const workspace = workspaceCheck.Items[0]!;
+    if (workspace['ownerId']?.S !== userId) {
+      return errorResponse(
+        403,
+        {
+          error: 'FORBIDDEN',
+          message: 'Access denied to this workspace',
+          code: '403',
+        },
+        requestId,
+      );
+    }
 
     // Generate document ID
     const documentId = randomUUID();
     const now = new Date().toISOString();
 
-    // Generate presigned URL
+    // Generate presigned URL with new S3 structure
     const { uploadUrl, s3Key } = await generatePresignedUrl(
+      userId,
+      workspaceId,
       documentId,
       filename,
-      contentType || 'application/octet-stream',
+      contentType || 'application/pdf',
     );
 
-    // Save metadata to DynamoDB
+    // Save metadata to DynamoDB with new schema
     const metadata: DocumentMetadata = {
       documentId,
+      workspaceId,
+      userId,
       filename,
       s3Key,
       status: DocumentStatus.UPLOAD_PENDING,
       uploadDate: now,
+      createdAt: now,
       contentType,
     };
 

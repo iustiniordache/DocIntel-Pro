@@ -10,7 +10,13 @@
  * - Filter by status
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useState,
+  useImperativeHandle,
+  forwardRef,
+} from 'react';
 import {
   FileText,
   Trash2,
@@ -24,20 +30,29 @@ import { listDocuments, deleteDocument, type Document } from '../lib/api-client'
 import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { cn, formatBytes, formatDate } from '../lib/utils';
+import { useWorkspace } from '../contexts/WorkspaceContext';
 
 export interface DocumentManagementProps {
   onDocumentSelect?: (documentId: string) => void;
 }
 
-export function DocumentManagement({ onDocumentSelect }: DocumentManagementProps) {
+export interface DocumentManagementRef {
+  refresh: () => Promise<void>;
+}
+
+export const DocumentManagement = forwardRef<
+  DocumentManagementRef,
+  DocumentManagementProps
+>(({ onDocumentSelect }, ref) => {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const { selectedWorkspace } = useWorkspace();
 
   const loadDocuments = useCallback(async () => {
     setLoading(true);
     try {
-      const docs = await listDocuments();
+      const docs = await listDocuments(selectedWorkspace?.workspaceId);
       setDocuments(
         docs.sort(
           (a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime(),
@@ -48,13 +63,15 @@ export function DocumentManagement({ onDocumentSelect }: DocumentManagementProps
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [selectedWorkspace?.workspaceId]);
+
+  // Expose refresh method to parent
+  useImperativeHandle(ref, () => ({
+    refresh: loadDocuments,
+  }));
 
   useEffect(() => {
     loadDocuments();
-    // Poll for updates every 5 seconds
-    const interval = setInterval(loadDocuments, 5000);
-    return () => clearInterval(interval);
   }, [loadDocuments]);
 
   const handleDelete = useCallback(
@@ -114,7 +131,9 @@ export function DocumentManagement({ onDocumentSelect }: DocumentManagementProps
       </CardContent>
     </Card>
   );
-}
+});
+
+DocumentManagement.displayName = 'DocumentManagement';
 
 interface DocumentItemProps {
   document: Document;
