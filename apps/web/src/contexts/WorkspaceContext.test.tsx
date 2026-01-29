@@ -78,13 +78,14 @@ describe('WorkspaceContext', () => {
       expect(result.current.workspaces).toHaveLength(2);
     });
 
-    if (mockWorkspaces[1]) {
+    const workspace = mockWorkspaces[1];
+    if (workspace) {
       act(() => {
-        result.current.selectWorkspace(mockWorkspaces[1]!);
+        result.current.selectWorkspace(workspace);
       });
-    }
 
-    expect(result.current.selectedWorkspace).toEqual(mockWorkspaces[1]);
+      expect(result.current.selectedWorkspace).toEqual(workspace);
+    }
   });
 
   it('should create new workspace', async () => {
@@ -160,12 +161,13 @@ describe('WorkspaceContext', () => {
       expect(result.current.workspaces).toHaveLength(2);
     });
 
-    if (mockWorkspaces[1]) {
+    const workspace = mockWorkspaces[1];
+    if (workspace) {
       act(() => {
-        result.current.selectWorkspace(mockWorkspaces[1]!);
+        result.current.selectWorkspace(workspace);
       });
-    }
 
-    expect(localStorage.getItem('selected_workspace')).toBe('workspace-2');
+      expect(localStorage.getItem('selected_workspace')).toBe('workspace-2');
+    }
   });
 });
