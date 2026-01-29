@@ -52,11 +52,12 @@ const CONFIG = {
 // Types
 interface QueryRequest {
   question: string;
-  documentId?: string;
+  workspaceId?: string;
 }
 
 interface Source {
   id: string;
+  documentId: string;
   similarity: number;
   pageNumber?: number;
   content?: string;
@@ -180,7 +181,7 @@ function validateRequest(body: unknown): {
     valid: true,
     data: {
       question,
-      documentId: bodyObj['documentId'] as string | undefined,
+      workspaceId: bodyObj['workspaceId'] as string | undefined,
     },
   };
 }
@@ -290,6 +291,7 @@ function calculateConfidence(chunks: SearchResult[]): number {
 function formatSources(chunks: SearchResult[]): Source[] {
   return chunks.map((chunk, index) => ({
     id: `S${index + 1}`,
+    documentId: chunk.documentId,
     similarity: Math.round(chunk.similarity_score * 100) / 100, // Round to 2 decimals
     pageNumber:
       chunk.metadata['page'] !== undefined && typeof chunk.metadata['page'] === 'number'
@@ -362,12 +364,12 @@ export async function handler(
       return errorResponse(400, 'Invalid request data');
     }
 
-    const { question, documentId } = validation.data;
+    const { question, workspaceId } = validation.data;
 
     logger.info({
       msg: 'Processing query',
       question: question.substring(0, 100),
-      documentId,
+      workspaceId,
       requestId,
     });
 
@@ -416,20 +418,22 @@ export async function handler(
       requestId,
     });
 
-    // 4. Filter by documentId if specified
+    // 4. Filter by workspaceId if specified
     let filteredResults = searchResults;
-    if (documentId) {
+    if (workspaceId) {
       logger.info({
-        msg: 'Step 4: Filtering by document ID',
-        documentId,
+        msg: 'Step 4: Filtering by workspace ID',
+        workspaceId,
         beforeCount: searchResults.length,
         requestId,
       });
 
-      filteredResults = searchResults.filter((r) => r.documentId === documentId);
+      filteredResults = searchResults.filter(
+        (r) => r.metadata['workspaceId'] === workspaceId,
+      );
       logger.info({
-        msg: 'Filtered by document ID',
-        documentId,
+        msg: 'Filtered by workspace ID',
+        workspaceId,
         beforeCount: searchResults.length,
         afterCount: filteredResults.length,
         filteredResults: filteredResults.map((r) => ({
@@ -440,7 +444,7 @@ export async function handler(
       });
     } else {
       logger.info({
-        msg: 'Step 4: No document ID filter applied',
+        msg: 'Step 4: No workspace ID filter applied',
         totalResults: searchResults.length,
         requestId,
       });

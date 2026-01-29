@@ -14,6 +14,28 @@ vi.mock('../contexts/AuthContext', () => ({
   }),
 }));
 
+// Mock workspace context
+const mockWorkspace = {
+  workspaceId: 'workspace-123',
+  name: 'Test Workspace',
+  description: 'Test description',
+  createdAt: '2024-01-01',
+  updatedAt: '2024-01-01',
+  userId: 'user-123',
+};
+
+vi.mock('../contexts/WorkspaceContext', () => ({
+  useWorkspace: () => ({
+    selectedWorkspace: mockWorkspace,
+    workspaces: [mockWorkspace],
+    isLoading: false,
+    selectWorkspace: vi.fn(),
+    createNewWorkspace: vi.fn(),
+    removeWorkspace: vi.fn(),
+    refreshWorkspaces: vi.fn(),
+  }),
+}));
+
 describe('useQuery', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -137,14 +159,13 @@ describe('useQuery', () => {
     const { result } = renderHook(() => useQuery());
 
     await act(async () => {
-      await result.current.sendMessage('Question', 'doc-123');
+      await result.current.sendMessage('Question');
     });
 
     await waitFor(() => {
       expect(apiClient.sendQuery).toHaveBeenCalledWith(
         expect.objectContaining({
           question: 'Question',
-          documentId: 'doc-123',
         }),
         'mock-token',
       );
