@@ -92,17 +92,10 @@ describe('useFileUpload', () => {
     vi.mocked(apiClient.requestUploadUrl).mockResolvedValue({
       uploadUrl: 'https://s3.amazonaws.com/upload',
       documentId: mockDocumentId,
-      key: 'test-key',
+      expiresIn: 3600,
     });
     vi.mocked(apiClient.uploadToS3).mockResolvedValue(undefined);
-    vi.mocked(apiClient.storeDocumentMetadata).mockResolvedValue({
-      documentId: mockDocumentId,
-      workspaceId: 'workspace-1',
-      name: 'test.pdf',
-      size: 1024,
-      uploadedAt: new Date().toISOString(),
-      status: 'processing',
-    });
+    vi.mocked(apiClient.storeDocumentMetadata).mockResolvedValue(undefined);
 
     const { result } = renderHook(() => useFileUpload());
 

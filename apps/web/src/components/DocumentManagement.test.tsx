@@ -13,19 +13,17 @@ vi.mock('../lib/api-client');
 const mockDocuments = [
   {
     documentId: 'doc-1',
-    workspaceId: 'workspace-1',
-    name: 'test.pdf',
-    size: 1024000,
-    uploadedAt: new Date('2024-01-15').toISOString(),
+    filename: 'test.pdf',
     status: 'completed' as const,
+    uploadedAt: new Date('2024-01-15').toISOString(),
+    size: 1024000,
   },
   {
     documentId: 'doc-2',
-    workspaceId: 'workspace-1',
-    name: 'another.pdf',
-    size: 2048000,
-    uploadedAt: new Date('2024-01-16').toISOString(),
+    filename: 'another.pdf',
     status: 'processing' as const,
+    uploadedAt: new Date('2024-01-16').toISOString(),
+    size: 2048000,
   },
 ];
 

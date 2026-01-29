@@ -452,6 +452,16 @@ export async function handler(
     }
 
     const workspace = workspaceCheck.Items[0];
+    if (!workspace) {
+      return errorResponse(
+        404,
+        {
+          error: 'NOT_FOUND',
+          message: 'Workspace not found',
+        },
+        requestId,
+      );
+    }
     if (workspace['ownerId']?.S !== userId) {
       return errorResponse(
         403,

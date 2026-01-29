@@ -80,7 +80,7 @@ describe('WorkspaceContext', () => {
 
     if (mockWorkspaces[1]) {
       act(() => {
-        result.current.selectWorkspace(mockWorkspaces[1]);
+        result.current.selectWorkspace(mockWorkspaces[1]!);
       });
     }
 
@@ -162,7 +162,7 @@ describe('WorkspaceContext', () => {
 
     if (mockWorkspaces[1]) {
       act(() => {
-        result.current.selectWorkspace(mockWorkspaces[1]);
+        result.current.selectWorkspace(mockWorkspaces[1]!);
       });
     }
 

@@ -35,7 +35,7 @@ describe('Input', () => {
 
     rerender(<Input type="password" />);
     input = screen.getByDisplayValue('') as HTMLInputElement;
-    expect(input.type).toBe('password');
+    expect(input).toHaveAttribute('type', 'password');
   });
 
   it('should be disabled when disabled prop is true', () => {

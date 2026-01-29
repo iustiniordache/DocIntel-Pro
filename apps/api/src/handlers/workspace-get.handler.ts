@@ -81,7 +81,20 @@ export const handler = async (
       };
     }
 
-    const workspace = unmarshall(result.Items[0]) as Workspace;
+    const workspaceItem = result.Items[0];
+    if (!workspaceItem) {
+      return {
+        statusCode: 404,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Headers': 'Content-Type,Authorization',
+        },
+        body: JSON.stringify({ error: 'Not Found', message: 'Workspace not found' }),
+      };
+    }
+
+    const workspace = unmarshall(workspaceItem) as Workspace;
 
     // Verify ownership
     if (workspace.ownerId !== userId) {
