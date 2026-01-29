@@ -28,14 +28,16 @@ import {
   PutItemCommandInput,
   UpdateItemCommand,
   UpdateItemCommandInput,
+  QueryCommand,
 } from '@aws-sdk/client-dynamodb';
-import { marshall } from '@aws-sdk/util-dynamodb';
+import { marshall, unmarshall } from '@aws-sdk/util-dynamodb';
 import { randomUUID } from 'crypto';
 import pino from 'pino';
 
 // Types
 interface DocumentMetadata {
-  documentId: string;
+  workspaceId: string; // Partition key
+  documentId: string; // Sort key
   filename: string;
   bucket: string;
   s3Key: string;
@@ -391,10 +393,19 @@ async function processRecord(record: S3EventRecord, requestId: string): Promise<
     return;
   }
 
-  // Extract documentId from S3 key path: documents/<documentId>/<filename>
+  // Extract userId and workspaceId from S3 key path: <userId>/<workspaceId>/<filename>
   const keyParts = key.split('/');
-  const documentId: string =
-    keyParts.length >= 2 && keyParts[1] ? keyParts[1] : randomUUID();
+  const userId = keyParts.length >= 1 ? keyParts[0] : null;
+  const workspaceId = keyParts.length >= 2 ? keyParts[1] : null;
+
+  if (!userId || !workspaceId) {
+    logger.warn(
+      { bucket, key, filename, requestId },
+      'Invalid S3 key structure, expected: <userId>/<workspaceId>/<filename>',
+    );
+    return;
+  }
+
   const now = new Date().toISOString();
 
   logger.info(
@@ -403,27 +414,78 @@ async function processRecord(record: S3EventRecord, requestId: string): Promise<
       key,
       filename,
       requestId,
-      documentId,
+      userId,
+      workspaceId,
       fileSize: validation.fileSize,
-      extractedFromKey: keyParts.length >= 2,
     },
     'File validated successfully',
   );
 
-  // Save document metadata
-  const metadata: DocumentMetadata = {
-    documentId,
-    filename,
-    bucket,
-    s3Key: key,
-    uploadDate: now,
-    status: DocumentStatus.TEXTRACT_PENDING,
-    fileSize: validation.fileSize ?? 0,
-    contentType: validation.contentType ?? 'application/octet-stream',
-    createdAt: now,
-  };
+  // Query DynamoDB to find the document by workspaceId and s3Key
+  const queryResult = await dynamoClient.send(
+    new QueryCommand({
+      TableName: CONFIG.dynamodb.metadataTable,
+      KeyConditionExpression: 'workspaceId = :workspaceId',
+      FilterExpression: 's3Key = :s3Key',
+      ExpressionAttributeValues: marshall({
+        ':workspaceId': workspaceId,
+        ':s3Key': key,
+      }),
+    }),
+  );
 
-  await saveDocumentMetadata(metadata);
+  let documentId: string;
+
+  if (queryResult.Items && queryResult.Items.length > 0) {
+    // Document already exists (created by upload handler)
+    const existingDoc = unmarshall(queryResult.Items[0]!);
+    documentId = existingDoc['documentId'] as string;
+
+    logger.info(
+      { documentId, workspaceId, filename },
+      'Found existing document in DynamoDB',
+    );
+
+    // Update status to TEXTRACT_PENDING
+    await dynamoClient.send(
+      new UpdateItemCommand({
+        TableName: CONFIG.dynamodb.metadataTable,
+        Key: marshall({ workspaceId, documentId }),
+        UpdateExpression: 'SET #status = :status, updatedAt = :updatedAt',
+        ExpressionAttributeNames: {
+          '#status': 'status',
+        },
+        ExpressionAttributeValues: marshall({
+          ':status': DocumentStatus.TEXTRACT_PENDING,
+          ':updatedAt': now,
+        }),
+      }),
+    );
+  } else {
+    // Document not found, this shouldn't happen if upload handler works correctly
+    // But we'll handle it gracefully
+    logger.warn(
+      { workspaceId, filename, key },
+      'Document not found in DynamoDB, creating new entry',
+    );
+
+    documentId = randomUUID();
+
+    const metadata: DocumentMetadata = {
+      workspaceId, // Add workspaceId as partition key
+      documentId,
+      filename,
+      bucket,
+      s3Key: key,
+      uploadDate: now,
+      status: DocumentStatus.TEXTRACT_PENDING,
+      fileSize: validation.fileSize ?? 0,
+      contentType: validation.contentType ?? 'application/octet-stream',
+      createdAt: now,
+    };
+
+    await saveDocumentMetadata(metadata);
+  }
 
   // Start Textract job
   try {

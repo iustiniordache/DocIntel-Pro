@@ -10,7 +10,7 @@ import {
   TextractClient,
   StartDocumentTextDetectionCommand,
 } from '@aws-sdk/client-textract';
-import { DynamoDBClient, PutItemCommand } from '@aws-sdk/client-dynamodb';
+import { DynamoDBClient, PutItemCommand, QueryCommand } from '@aws-sdk/client-dynamodb';
 
 // Mock NestJS using vi.hoisted() for proper hoisting
 const { mockConfigService } = vi.hoisted(() => ({
@@ -101,6 +101,17 @@ describe('Textract Start Handler', () => {
     ],
   });
 
+  // Helper to create S3 event with proper key format
+  const createValidS3Event = (
+    bucket: string,
+    filename: string,
+    userId = 'test-user',
+    workspaceId = 'workspace-123',
+  ) => {
+    const key = `${userId}/${workspaceId}/${filename}`;
+    return createS3Event(bucket, key);
+  };
+
   const createContext = (): Context => ({
     callbackWaitsForEmptyEventLoop: true,
     functionName: 'test-function',
@@ -119,7 +130,7 @@ describe('Textract Start Handler', () => {
   describe('Valid PDF Processing', () => {
     it('should process valid PDF successfully', async () => {
       const bucket = 'test-bucket';
-      const key = 'documents/test.pdf';
+      const key = 'test-user/workspace-123/test.pdf';
 
       // Mock S3 HeadObject
       s3Mock.on(HeadObjectCommand).resolves({
@@ -132,7 +143,10 @@ describe('Textract Start Handler', () => {
         JobId: 'test-job-id-123',
       });
 
-      // Mock DynamoDB PutItem
+      // Mock DynamoDB Query and PutItem
+      dynamoMock.on(QueryCommand).resolves({
+        Items: [],
+      });
       dynamoMock.on(PutItemCommand).resolves({});
 
       const event = createS3Event(bucket, key);
@@ -162,8 +176,8 @@ describe('Textract Start Handler', () => {
 
     it('should handle URL-encoded S3 keys', async () => {
       const bucket = 'test-bucket';
-      const encodedKey = 'documents%2Fmy%20file%20%281%29.pdf';
-      const decodedKey = 'documents/my file (1).pdf';
+      const encodedKey = 'user1%2Fworkspace1%2Fmy%20file%20%281%29.pdf';
+      const decodedKey = 'user1/workspace1/my file (1).pdf';
 
       s3Mock.on(HeadObjectCommand).resolves({
         ContentType: 'application/pdf',
@@ -194,13 +208,14 @@ describe('Textract Start Handler', () => {
         JobId: 'test-job-id',
       });
 
+      dynamoMock.on(QueryCommand).resolves({ Items: [] });
       dynamoMock.on(PutItemCommand).resolves({});
 
       const event: S3Event = {
         Records: [
-          createS3Event('bucket1', 'file1.pdf').Records[0],
-          createS3Event('bucket2', 'file2.pdf').Records[0],
-          createS3Event('bucket3', 'file3.pdf').Records[0],
+          createS3Event('bucket1', 'user1/workspace1/file1.pdf').Records[0],
+          createS3Event('bucket2', 'user2/workspace2/file2.pdf').Records[0],
+          createS3Event('bucket3', 'user3/workspace3/file3.pdf').Records[0],
         ],
       };
 
@@ -218,7 +233,7 @@ describe('Textract Start Handler', () => {
         ContentLength: 1024000,
       });
 
-      const event = createS3Event('test-bucket', 'image.jpg');
+      const event = createS3Event('test-bucket', 'test-user/workspace-123/image.jpg');
       await handler(event, createContext());
 
       // HeadObject called but Textract not called
@@ -232,7 +247,7 @@ describe('Textract Start Handler', () => {
         ContentLength: 60000000, // 60MB
       });
 
-      const event = createS3Event('test-bucket', 'large.pdf');
+      const event = createS3Event('test-bucket', 'test-user/workspace-123/large.pdf');
       await handler(event, createContext());
 
       expect(s3Mock.commandCalls(HeadObjectCommand).length).toBe(1);
@@ -245,7 +260,7 @@ describe('Textract Start Handler', () => {
         ContentLength: 0,
       });
 
-      const event = createS3Event('test-bucket', 'empty.pdf');
+      const event = createS3Event('test-bucket', 'test-user/workspace-123/empty.pdf');
       await handler(event, createContext());
 
       expect(s3Mock.commandCalls(HeadObjectCommand).length).toBe(1);
@@ -255,7 +270,7 @@ describe('Textract Start Handler', () => {
     it('should handle S3 HeadObject errors gracefully', async () => {
       s3Mock.on(HeadObjectCommand).rejects(new Error('Access Denied'));
 
-      const event = createS3Event('test-bucket', 'test.pdf');
+      const event = createS3Event('test-bucket', 'test-user/workspace-123/test.pdf');
       await handler(event, createContext());
 
       expect(s3Mock.commandCalls(HeadObjectCommand).length).toBe(1);
@@ -277,9 +292,10 @@ describe('Textract Start Handler', () => {
         .rejectsOnce(new Error('Throttling'))
         .resolvesOnce({ JobId: 'test-job-id-retry' });
 
+      dynamoMock.on(QueryCommand).resolves({ Items: [] });
       dynamoMock.on(PutItemCommand).resolves({});
 
-      const event = createS3Event('test-bucket', 'test.pdf');
+      const event = createS3Event('test-bucket', 'test-user/workspace-123/test.pdf');
       await handler(event, createContext());
 
       // Should have tried 3 times
@@ -296,9 +312,10 @@ describe('Textract Start Handler', () => {
         .on(StartDocumentTextDetectionCommand)
         .rejects(new Error('Persistent error'));
 
+      dynamoMock.on(QueryCommand).resolves({ Items: [] });
       dynamoMock.on(PutItemCommand).resolves({});
 
-      const event = createS3Event('test-bucket', 'test.pdf');
+      const event = createS3Event('test-bucket', 'test-user/workspace-123/test.pdf');
       await handler(event, createContext());
 
       // Should have tried 3 times
@@ -321,7 +338,7 @@ describe('Textract Start Handler', () => {
 
       dynamoMock.on(PutItemCommand).resolves({});
 
-      const event = createS3Event('test-bucket', 'test.pdf');
+      const event = createS3Event('test-bucket', 'test-user/workspace-123/test.pdf');
       await handler(event, createContext());
 
       // Should not have saved metadata since Textract failed
@@ -339,9 +356,10 @@ describe('Textract Start Handler', () => {
         JobId: 'test-job-id',
       });
 
+      dynamoMock.on(QueryCommand).resolves({ Items: [] });
       dynamoMock.on(PutItemCommand).resolves({});
 
-      const event = createS3Event('test-bucket', 'test.pdf');
+      const event = createS3Event('test-bucket', 'test-user/workspace-123/test.pdf');
       await handler(event, createContext());
 
       const textractCall = textractMock.commandCalls(StartDocumentTextDetectionCommand)[0]
@@ -364,9 +382,10 @@ describe('Textract Start Handler', () => {
         JobId: 'test-job-id',
       });
 
+      dynamoMock.on(QueryCommand).resolves({ Items: [] });
       dynamoMock.on(PutItemCommand).resolves({});
 
-      const event = createS3Event('test-bucket', 'folder/document.pdf');
+      const event = createS3Event('test-bucket', 'test-user/workspace-123/document.pdf');
       await handler(event, createContext());
 
       // Job metadata should be saved
@@ -375,7 +394,7 @@ describe('Textract Start Handler', () => {
         .find((call) => call.args[0].input.TableName === 'DocIntel-ProcessingJobs');
 
       expect(jobCall).toBeDefined();
-      expect(jobCall.args[0].input.Item).toMatchObject({
+      expect(jobCall?.args[0].input.Item).toMatchObject({
         jobId: { S: expect.any(String) },
         documentId: { S: expect.any(String) },
         status: { S: 'TEXTRACT_IN_PROGRESS' },
@@ -392,9 +411,10 @@ describe('Textract Start Handler', () => {
         JobId: 'test-job-id-789',
       });
 
+      dynamoMock.on(QueryCommand).resolves({ Items: [] });
       dynamoMock.on(PutItemCommand).resolves({});
 
-      const event = createS3Event('test-bucket', 'test.pdf');
+      const event = createS3Event('test-bucket', 'test-user/workspace-123/test.pdf');
       await handler(event, createContext());
 
       const jobCall = dynamoMock
@@ -436,7 +456,7 @@ describe('Textract Start Handler', () => {
         })
         .rejects(new Error('DynamoDB error'));
 
-      const event = createS3Event('test-bucket', 'test.pdf');
+      const event = createS3Event('test-bucket', 'test-user/workspace-123/test.pdf');
 
       // Should not throw
       await expect(handler(event, createContext())).resolves.toBeUndefined();
@@ -481,7 +501,11 @@ describe('Textract Start Handler', () => {
     });
 
     it('should skip non-ObjectCreated events', async () => {
-      const event = createS3Event('test-bucket', 'test.pdf', 'ObjectRemoved:Delete');
+      const event = createS3Event(
+        'test-bucket',
+        'test-user/workspace-123/test.pdf',
+        'ObjectRemoved:Delete',
+      );
 
       await handler(event, createContext());
 
@@ -509,13 +533,14 @@ describe('Textract Start Handler', () => {
         JobId: 'test-job-id',
       });
 
+      dynamoMock.on(QueryCommand).resolves({ Items: [] });
       dynamoMock.on(PutItemCommand).resolves({});
 
       const event: S3Event = {
         Records: [
-          createS3Event('bucket1', 'file1.pdf').Records[0],
-          createS3Event('bucket2', 'file2.pdf').Records[0],
-          createS3Event('bucket3', 'file3.pdf').Records[0],
+          createS3Event('bucket1', 'user1/workspace1/file1.pdf').Records[0],
+          createS3Event('bucket2', 'user2/workspace2/file2.pdf').Records[0],
+          createS3Event('bucket3', 'user3/workspace3/file3.pdf').Records[0],
         ],
       };
 
@@ -537,7 +562,7 @@ describe('Textract Start Handler', () => {
 
       dynamoMock.on(PutItemCommand).resolves({});
 
-      const event = createS3Event('test-bucket', 'test.pdf');
+      const event = createS3Event('test-bucket', 'test-user/workspace-123/test.pdf');
 
       // Should not throw
       await expect(handler(event, createContext())).resolves.toBeUndefined();
@@ -558,9 +583,10 @@ describe('Textract Start Handler', () => {
         JobId: 'test-job-id',
       });
 
+      dynamoMock.on(QueryCommand).resolves({ Items: [] });
       dynamoMock.on(PutItemCommand).resolves({});
 
-      const event = createS3Event('test-bucket', 'test.pdf');
+      const event = createS3Event('test-bucket', 'test-user/workspace-123/test.pdf');
       await handler(event, createContext());
 
       // With mocked config, NotificationChannel will always be present

@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { APIGatewayProxyEventV2, Context } from 'aws-lambda';
+import { APIGatewayProxyEvent, Context } from 'aws-lambda';
 import { handler, resetRateLimiter } from './upload.handler';
 
 // Type helper to work around AWS Lambda return type union
@@ -16,7 +16,9 @@ type HandlerResult = Awaited<ReturnType<typeof handler>> & {
 // Create mock functions using vi.hoisted() for proper hoisting
 const { mockDynamoDBSend, mockS3Send, mockGetSignedUrl, mockConfigService } = vi.hoisted(
   () => ({
-    mockDynamoDBSend: vi.fn().mockResolvedValue({}),
+    mockDynamoDBSend: vi.fn().mockResolvedValue({
+      Items: [{ workspaceId: { S: 'workspace-123' }, ownerId: { S: 'test-user-123' } }],
+    }),
     mockS3Send: vi.fn(),
     mockGetSignedUrl: vi
       .fn()
@@ -33,6 +35,7 @@ const { mockDynamoDBSend, mockS3Send, mockGetSignedUrl, mockConfigService } = vi
       dynamodb: {
         metadataTable: 'test-metadata-table',
         jobsTable: 'test-jobs-table',
+        workspacesTable: 'test-workspaces-table',
       },
       textract: {
         snsTopicArn: 'arn:aws:sns:us-east-1:123456789012:test-topic',
@@ -71,6 +74,7 @@ vi.mock('@aws-sdk/client-dynamodb', () => ({
     send: mockDynamoDBSend,
   })),
   PutItemCommand: vi.fn(),
+  QueryCommand: vi.fn(),
 }));
 
 vi.mock('@aws-sdk/util-dynamodb', () => ({
@@ -87,36 +91,58 @@ vi.mock('pino', () => ({
 }));
 
 // Helper to create mock event
-function createMockEvent(body: any, method: string = 'POST'): APIGatewayProxyEventV2 {
+function createMockEvent(body: any, method: string = 'POST'): APIGatewayProxyEvent {
   return {
-    version: '2.0',
-    routeKey: 'POST /upload',
-    rawPath: '/upload',
-    rawQueryString: '',
+    body: body ? JSON.stringify(body) : null,
     headers: {
       'content-type': 'application/json',
     },
+    multiValueHeaders: {},
+    httpMethod: method,
+    isBase64Encoded: false,
+    path: '/upload',
+    pathParameters: null,
+    queryStringParameters: null,
+    multiValueQueryStringParameters: null,
+    stageVariables: null,
     requestContext: {
       accountId: '123456789012',
       apiId: 'api123',
-      domainName: 'api.example.com',
-      domainPrefix: 'api',
-      http: {
-        method,
-        path: '/upload',
-        protocol: 'HTTP/1.1',
-        sourceIp: '192.168.1.1',
-        userAgent: 'test-agent',
-      },
-      requestId: 'test-request-id',
-      routeKey: 'POST /upload',
+      protocol: 'HTTP/1.1',
+      httpMethod: method,
+      path: '/upload',
       stage: 'prod',
-      time: '01/Jan/2025:00:00:00 +0000',
-      timeEpoch: 1735689600000,
+      requestId: 'test-request-id',
+      requestTime: '01/Jan/2025:00:00:00 +0000',
+      requestTimeEpoch: 1735689600000,
+      resourceId: 'resource123',
+      resourcePath: '/upload',
+      authorizer: {
+        claims: {
+          sub: 'test-user-123',
+          email: 'test@example.com',
+        },
+      },
+      identity: {
+        accessKey: null,
+        accountId: null,
+        apiKey: null,
+        apiKeyId: null,
+        caller: null,
+        clientCert: null,
+        cognitoAuthenticationProvider: null,
+        cognitoAuthenticationType: null,
+        cognitoIdentityId: null,
+        cognitoIdentityPoolId: null,
+        principalOrgId: null,
+        sourceIp: '192.168.1.1',
+        user: null,
+        userAgent: 'test-agent',
+        userArn: null,
+      },
     },
-    body: body ? JSON.stringify(body) : null,
-    isBase64Encoded: false,
-  } as APIGatewayProxyEventV2;
+    resource: '/upload',
+  } as APIGatewayProxyEvent;
 }
 
 // Helper to create mock context
@@ -141,10 +167,13 @@ describe('Upload Handler', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetRateLimiter(); // Reset rate limiter between tests
-    mockDynamoDBSend.mockResolvedValue({}); // Reset to success
+    mockDynamoDBSend.mockResolvedValue({
+      Items: [{ workspaceId: { S: 'workspace-123' }, ownerId: { S: 'test-user-123' } }],
+    });
     mockGetSignedUrl.mockResolvedValue('https://bucket.s3.amazonaws.com/presigned-url'); // Reset to success
     process.env.S3_BUCKET_NAME = 'test-bucket';
     process.env.DYNAMODB_TABLE = 'test-table';
+    process.env.DYNAMODB_WORKSPACES_TABLE = 'test-workspaces-table';
   });
 
   afterEach(() => {
@@ -153,7 +182,10 @@ describe('Upload Handler', () => {
 
   describe('Success Cases', () => {
     it('should return presigned URL for valid PDF upload request', async () => {
-      const event = createMockEvent({ filename: 'test-document.pdf' });
+      const event = createMockEvent({
+        filename: 'test-document.pdf',
+        workspaceId: 'workspace-123',
+      });
       const context = createMockContext();
 
       const result = (await handler(event, context)) as HandlerResult;
@@ -165,11 +197,14 @@ describe('Upload Handler', () => {
       expect(body).toHaveProperty('s3Key');
       expect(body).toHaveProperty('expiresIn');
       expect(body.expiresIn).toBe(300);
-      expect(body.s3Key).toMatch(/^documents\/[a-f0-9-]+\/test-document\.pdf$/);
+      expect(body.s3Key).toMatch(/test-document\.pdf$/);
     });
 
     it('should sanitize filename with special characters', async () => {
-      const event = createMockEvent({ filename: '../test file (1).pdf' });
+      const event = createMockEvent({
+        filename: '../test file (1).pdf',
+        workspaceId: 'workspace-123',
+      });
       const context = createMockContext();
 
       const result = (await handler(event, context)) as HandlerResult;
@@ -191,7 +226,10 @@ describe('Upload Handler', () => {
     });
 
     it('should include CORS headers in response', async () => {
-      const event = createMockEvent({ filename: 'test.pdf' });
+      const event = createMockEvent({
+        filename: 'test.pdf',
+        workspaceId: 'workspace-123',
+      });
       const context = createMockContext();
 
       const result = (await handler(event, context)) as HandlerResult;
@@ -227,7 +265,7 @@ describe('Upload Handler', () => {
     });
 
     it('should reject missing filename', async () => {
-      const event = createMockEvent({});
+      const event = createMockEvent({ workspaceId: 'workspace-123' });
       const context = createMockContext();
 
       const result = (await handler(event, context)) as HandlerResult;
@@ -238,7 +276,10 @@ describe('Upload Handler', () => {
     });
 
     it('should reject non-PDF files', async () => {
-      const event = createMockEvent({ filename: 'document.docx' });
+      const event = createMockEvent({
+        filename: 'document.docx',
+        workspaceId: 'workspace-123',
+      });
       const context = createMockContext();
 
       const result = (await handler(event, context)) as HandlerResult;
@@ -250,7 +291,10 @@ describe('Upload Handler', () => {
 
     it('should reject filename exceeding max length', async () => {
       const longFilename = 'a'.repeat(101) + '.pdf';
-      const event = createMockEvent({ filename: longFilename });
+      const event = createMockEvent({
+        filename: longFilename,
+        workspaceId: 'workspace-123',
+      });
       const context = createMockContext();
 
       const result = (await handler(event, context)) as HandlerResult;
@@ -260,7 +304,10 @@ describe('Upload Handler', () => {
     });
 
     it('should reject invalid filename format', async () => {
-      const event = createMockEvent({ filename: '....pdf' });
+      const event = createMockEvent({
+        filename: '....pdf',
+        workspaceId: 'workspace-123',
+      });
       const context = createMockContext();
 
       const result = (await handler(event, context)) as HandlerResult;
@@ -272,7 +319,10 @@ describe('Upload Handler', () => {
 
   describe('Rate Limiting', () => {
     it('should enforce rate limit after max requests', async () => {
-      const event = createMockEvent({ filename: 'test.pdf' });
+      const event = createMockEvent({
+        filename: 'test.pdf',
+        workspaceId: 'workspace-123',
+      });
       const context = createMockContext();
 
       // Make 10 successful requests
@@ -294,7 +344,10 @@ describe('Upload Handler', () => {
       // Mock DynamoDB to throw error
       mockDynamoDBSend.mockRejectedValueOnce(new Error('DynamoDB error'));
 
-      const event = createMockEvent({ filename: 'test.pdf' });
+      const event = createMockEvent({
+        filename: 'test.pdf',
+        workspaceId: 'workspace-123',
+      });
       const context = createMockContext();
 
       const result = (await handler(event, context)) as HandlerResult;
@@ -310,7 +363,10 @@ describe('Upload Handler', () => {
       // Mock S3 presigner to throw error
       mockGetSignedUrl.mockRejectedValueOnce(new Error('S3 error'));
 
-      const event = createMockEvent({ filename: 'test.pdf' });
+      const event = createMockEvent({
+        filename: 'test.pdf',
+        workspaceId: 'workspace-123',
+      });
       const context = createMockContext();
 
       const result = (await handler(event, context)) as HandlerResult;
@@ -323,7 +379,10 @@ describe('Upload Handler', () => {
 
   describe('Security', () => {
     it('should strip path traversal attempts', async () => {
-      const event = createMockEvent({ filename: '../../../etc/passwd.pdf' });
+      const event = createMockEvent({
+        filename: '../../../etc/passwd.pdf',
+        workspaceId: 'workspace-123',
+      });
       const context = createMockContext();
 
       const result = (await handler(event, context)) as HandlerResult;
@@ -335,7 +394,10 @@ describe('Upload Handler', () => {
     });
 
     it('should sanitize special characters', async () => {
-      const event = createMockEvent({ filename: 'test<script>.pdf' });
+      const event = createMockEvent({
+        filename: 'test<script>.pdf',
+        workspaceId: 'workspace-123',
+      });
       const context = createMockContext();
 
       const result = (await handler(event, context)) as HandlerResult;
@@ -348,7 +410,10 @@ describe('Upload Handler', () => {
 
   describe('Edge Cases', () => {
     it('should handle uppercase PDF extension', async () => {
-      const event = createMockEvent({ filename: 'test.PDF' });
+      const event = createMockEvent({
+        filename: 'test.PDF',
+        workspaceId: 'workspace-123',
+      });
       const context = createMockContext();
 
       const result = (await handler(event, context)) as HandlerResult;
@@ -359,6 +424,7 @@ describe('Upload Handler', () => {
     it('should handle custom content type', async () => {
       const event = createMockEvent({
         filename: 'test.pdf',
+        workspaceId: 'workspace-123',
         contentType: 'application/pdf',
       });
       const context = createMockContext();
@@ -369,8 +435,14 @@ describe('Upload Handler', () => {
     });
 
     it('should generate unique document IDs for concurrent requests', async () => {
-      const event1 = createMockEvent({ filename: 'test1.pdf' });
-      const event2 = createMockEvent({ filename: 'test2.pdf' });
+      const event1 = createMockEvent({
+        filename: 'test1.pdf',
+        workspaceId: 'workspace-123',
+      });
+      const event2 = createMockEvent({
+        filename: 'test2.pdf',
+        workspaceId: 'workspace-123',
+      });
       const context = createMockContext();
 
       const [result1, result2] = (await Promise.all([

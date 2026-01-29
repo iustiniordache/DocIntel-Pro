@@ -9,19 +9,33 @@ export enum DocumentStatus {
 }
 
 /**
- * Document metadata interface
+ * Workspace interface
+ */
+export interface Workspace {
+  workspaceId: string;
+  ownerId: string;
+  name: string;
+  description?: string;
+  createdAt: string;
+  updatedAt: string;
+  documentCount?: number;
+}
+
+/**
+ * Document metadata interface - Updated with workspace support
  */
 export interface Document {
-  id: string;
+  documentId: string; // Changed from 'id' to match new schema
+  workspaceId: string; // New: Partition key
+  userId: string; // New: User who owns the document
   fileName: string;
   fileSize: number;
   mimeType: string;
-  s3Key: string;
+  s3Key: string; // Updated format: /<userId>/<workspaceId>/<documentId>
   s3Bucket: string;
   status: DocumentStatus;
   createdAt: string;
   updatedAt: string;
-  userId?: string;
   metadata?: Record<string, unknown>;
 }
 

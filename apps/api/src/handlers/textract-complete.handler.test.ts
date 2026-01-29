@@ -14,6 +14,11 @@ import {
   QueryCommand,
   UpdateItemCommand,
 } from '@aws-sdk/client-dynamodb';
+import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import {
+  BedrockRuntimeClient,
+  InvokeModelCommand,
+} from '@aws-sdk/client-bedrock-runtime';
 import { marshall } from '@aws-sdk/util-dynamodb';
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 import { mockClient } from 'aws-sdk-client-mock';
@@ -21,6 +26,61 @@ import { mockClient } from 'aws-sdk-client-mock';
 // Setup mocks
 const textractMock = mockClient(TextractClient);
 const dynamoMock = mockClient(DynamoDBClient);
+const s3Mock = mockClient(S3Client);
+const bedrockMock = mockClient(BedrockRuntimeClient);
+
+// Mock OpenSearch client
+const mockOpenSearchClient = {
+  indices: {
+    exists: vi.fn().mockResolvedValue({ body: true }),
+    create: vi.fn().mockResolvedValue({ body: { acknowledged: true } }),
+  },
+  index: vi.fn().mockResolvedValue({
+    body: {
+      _id: 'test-chunk-id',
+      result: 'created',
+    },
+  }),
+  bulk: vi.fn().mockResolvedValue({
+    body: {
+      errors: false,
+      items: [{ index: { _id: 'chunk-1', status: 201 } }],
+    },
+  }),
+  search: vi.fn().mockResolvedValue({
+    body: {
+      hits: {
+        total: { value: 1 },
+        hits: [
+          {
+            _id: 'chunk-1',
+            _score: 0.95,
+            _source: {
+              documentId: 'test-doc-id',
+              chunkId: 'chunk-1',
+              content: 'Test content from document',
+              embedding: Array(1024).fill(0.5),
+              metadata: { page: 1 },
+            },
+          },
+        ],
+      },
+    },
+  }),
+  delete: vi.fn().mockResolvedValue({ body: { result: 'deleted' } }),
+  deleteByQuery: vi.fn().mockResolvedValue({
+    body: { deleted: 1 },
+  }),
+};
+
+// Mock @opensearch-project/opensearch
+vi.mock('@opensearch-project/opensearch', () => ({
+  Client: vi.fn(() => mockOpenSearchClient),
+}));
+
+vi.mock('@opensearch-project/opensearch/aws', () => ({
+  AwsSigv4Signer: vi.fn(() => ({})),
+}));
 
 // Set environment variables BEFORE importing handler
 process.env['AWS_REGION'] = 'us-east-1';
@@ -31,6 +91,7 @@ process.env['TEXTRACT_COST_PER_PAGE'] = '0.0015';
 process.env['OPENSEARCH_DOMAIN'] = 'https://test-domain.us-east-1.es.amazonaws.com';
 process.env['OPENSEARCH_INDEX_NAME'] = 'test-vectors';
 process.env['BEDROCK_EMBEDDING_MODEL_ID'] = 'amazon.titan-embed-text-v2:0';
+process.env['S3_BUCKET_NAME'] = 'test-bucket';
 process.env['LOG_LEVEL'] = 'error'; // Suppress logs in tests
 
 describe('textract-complete.handler', () => {
@@ -47,11 +108,34 @@ describe('textract-complete.handler', () => {
     // Reset mocks
     textractMock.reset();
     dynamoMock.reset();
+    s3Mock.reset();
+    bedrockMock.reset();
+    mockOpenSearchClient.index.mockClear();
+    mockOpenSearchClient.bulk.mockClear();
+    mockOpenSearchClient.search.mockClear();
+    mockOpenSearchClient.delete.mockClear();
+    mockOpenSearchClient.deleteByQuery.mockClear();
+
+    // Mock S3 PutObjectCommand for storing Textract results
+    s3Mock.on(PutObjectCommand).resolves({});
+
+    // Mock Bedrock InvokeModelCommand for embeddings
+    const mockEmbedding = Array(1024).fill(0.5);
+    const embeddingResponse = JSON.stringify({
+      embedding: mockEmbedding,
+    });
+    const encoded = new TextEncoder().encode(embeddingResponse);
+    bedrockMock.on(InvokeModelCommand).resolves({
+      body: Object.assign(encoded, {
+        transformToString: () => embeddingResponse,
+      }),
+    });
 
     // Mock Lambda context
     mockContext = {
       awsRequestId: 'test-request-id',
       functionName: 'test-function',
+      functionVersion: '$LATEST',
       invokedFunctionArn: 'arn:aws:lambda:us-east-1:123456789012:function:test',
       memoryLimitInMB: '512',
       logGroupName: '/aws/lambda/test',
@@ -100,7 +184,7 @@ describe('textract-complete.handler', () => {
                 API: 'StartDocumentTextDetection',
                 Timestamp: Date.now(),
                 DocumentLocation: {
-                  S3ObjectName: 'test-key.pdf',
+                  S3ObjectName: 'test-user-123/workspace-123/test-key.pdf',
                   S3Bucket: 'test-bucket',
                 },
               }),
@@ -122,7 +206,7 @@ describe('textract-complete.handler', () => {
             jobId,
             documentId,
             bucket: 'test-bucket',
-            s3Key: 'test-key.pdf',
+            s3Key: 'test-user-123/workspace-123/test-key.pdf',
             status: 'TEXTRACT_IN_PROGRESS',
             createdAt: new Date().toISOString(),
             textractJobId,
@@ -215,7 +299,7 @@ describe('textract-complete.handler', () => {
                 API: 'StartDocumentTextDetection',
                 Timestamp: Date.now(),
                 DocumentLocation: {
-                  S3ObjectName: 'test-key.pdf',
+                  S3ObjectName: 'test-user-123/workspace-123/test-key.pdf',
                   S3Bucket: 'test-bucket',
                 },
               }),
@@ -237,7 +321,7 @@ describe('textract-complete.handler', () => {
             jobId,
             documentId,
             bucket: 'test-bucket',
-            s3Key: 'test-key.pdf',
+            s3Key: 'test-user-123/workspace-123/test-key.pdf',
             status: 'TEXTRACT_IN_PROGRESS',
             createdAt: new Date().toISOString(),
             textractJobId,
@@ -324,7 +408,7 @@ describe('textract-complete.handler', () => {
                 API: 'StartDocumentTextDetection',
                 Timestamp: Date.now(),
                 DocumentLocation: {
-                  S3ObjectName: 'test-key.pdf',
+                  S3ObjectName: 'test-user-123/workspace-123/test-key.pdf',
                   S3Bucket: 'test-bucket',
                 },
               }),
@@ -346,7 +430,7 @@ describe('textract-complete.handler', () => {
             jobId,
             documentId,
             bucket: 'test-bucket',
-            s3Key: 'test-key.pdf',
+            s3Key: 'test-user-123/workspace-123/test-key.pdf',
             status: 'TEXTRACT_IN_PROGRESS',
             createdAt: new Date().toISOString(),
             textractJobId,
@@ -387,7 +471,7 @@ describe('textract-complete.handler', () => {
                 API: 'StartDocumentTextDetection',
                 Timestamp: Date.now(),
                 DocumentLocation: {
-                  S3ObjectName: 'test-key.pdf',
+                  S3ObjectName: 'test-user-123/workspace-123/test-key.pdf',
                   S3Bucket: 'test-bucket',
                 },
               }),
@@ -467,7 +551,7 @@ describe('textract-complete.handler', () => {
                 API: 'StartDocumentTextDetection',
                 Timestamp: Date.now(),
                 DocumentLocation: {
-                  S3ObjectName: 'test-key.pdf',
+                  S3ObjectName: 'test-user-123/workspace-123/test-key.pdf',
                   S3Bucket: 'test-bucket',
                 },
               }),
@@ -489,7 +573,7 @@ describe('textract-complete.handler', () => {
             jobId,
             documentId,
             bucket: 'test-bucket',
-            s3Key: 'test-key.pdf',
+            s3Key: 'test-user-123/workspace-123/test-key.pdf',
             status: 'TEXTRACT_IN_PROGRESS',
             createdAt: new Date().toISOString(),
             textractJobId,
@@ -536,7 +620,7 @@ describe('textract-complete.handler', () => {
                 API: 'StartDocumentTextDetection',
                 Timestamp: Date.now(),
                 DocumentLocation: {
-                  S3ObjectName: 'test-key.pdf',
+                  S3ObjectName: 'test-user-123/workspace-123/test-key.pdf',
                   S3Bucket: 'test-bucket',
                 },
               }),
@@ -558,7 +642,7 @@ describe('textract-complete.handler', () => {
             jobId,
             documentId,
             bucket: 'test-bucket',
-            s3Key: 'test-key.pdf',
+            s3Key: 'test-user-123/workspace-123/test-key.pdf',
             status: 'TEXTRACT_IN_PROGRESS',
             createdAt: new Date().toISOString(),
             textractJobId,

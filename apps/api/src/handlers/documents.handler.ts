@@ -5,8 +5,8 @@
  */
 
 import { APIGatewayProxyEvent, APIGatewayProxyResult, Context } from 'aws-lambda';
-import { DynamoDBClient, ScanCommand } from '@aws-sdk/client-dynamodb';
-import { unmarshall } from '@aws-sdk/util-dynamodb';
+import { DynamoDBClient, QueryCommand } from '@aws-sdk/client-dynamodb';
+import { marshall, unmarshall } from '@aws-sdk/util-dynamodb';
 import pino from 'pino';
 
 interface Document {
@@ -31,6 +31,7 @@ const CONFIG = {
   },
   dynamodb: {
     metadataTable: process.env['DYNAMODB_METADATA_TABLE'] || '',
+    workspacesTable: process.env['DYNAMODB_WORKSPACES_TABLE'] || '',
   },
   logging: {
     level: process.env['LOG_LEVEL'] || 'info',
@@ -71,27 +72,62 @@ function mapStatus(dbStatus: string): string {
     PROCESSED: 'completed',
     COMPLETED: 'completed',
     FAILED: 'failed',
+    TEXTRACT_PENDING: 'processing',
+    TEXTRACT_IN_PROGRESS: 'processing',
+    TEXTRACT_COMPLETED: 'completed',
+    TEXTRACT_FAILED: 'failed',
   };
 
   return statusMap[dbStatus] || 'processing';
 }
 
 /**
- * Fetch all documents from DynamoDB
+ * Fetch documents from DynamoDB for a specific workspace
  */
-async function fetchDocuments(): Promise<Document[]> {
-  const command = new ScanCommand({
-    TableName: CONFIG.dynamodb.metadataTable,
-  });
-
-  const response = await dynamoClient.send(command);
-
-  if (!response.Items) {
+async function fetchDocuments(userId: string, workspaceId?: string): Promise<Document[]> {
+  // If no workspaceId provided, return empty array
+  if (!workspaceId) {
     return [];
   }
 
-  // Convert DynamoDB items to Document objects
-  const documents = response.Items.map((item) => {
+  // Verify workspace ownership
+  const workspaceCheck = await dynamoClient.send(
+    new QueryCommand({
+      TableName: CONFIG.dynamodb.workspacesTable,
+      IndexName: 'WorkspaceIdIndex',
+      KeyConditionExpression: 'workspaceId = :workspaceId',
+      ExpressionAttributeValues: marshall({
+        ':workspaceId': workspaceId,
+      }),
+    }),
+  );
+
+  if (!workspaceCheck.Items || workspaceCheck.Items.length === 0) {
+    return [];
+  }
+
+  const workspace = unmarshall(workspaceCheck.Items[0]!);
+  if (workspace['ownerId'] !== userId) {
+    // User doesn't own this workspace
+    return [];
+  }
+
+  // Fetch documents for the workspace
+  const documentsResponse = await dynamoClient.send(
+    new QueryCommand({
+      TableName: CONFIG.dynamodb.metadataTable,
+      KeyConditionExpression: 'workspaceId = :workspaceId',
+      ExpressionAttributeValues: marshall({
+        ':workspaceId': workspaceId,
+      }),
+    }),
+  );
+
+  if (!documentsResponse.Items) {
+    return [];
+  }
+
+  const documents = documentsResponse.Items.map((item) => {
     const unmarshalled = unmarshall(item) as Record<string, unknown>;
 
     return {
@@ -127,7 +163,7 @@ function successResponse(
       'X-Request-ID': requestId,
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET,OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
+      'Access-Control-Allow-Headers': 'Content-Type,Authorization',
     },
     body: JSON.stringify(documents),
   };
@@ -148,7 +184,7 @@ function errorResponse(
       'X-Request-ID': requestId,
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET,OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
+      'Access-Control-Allow-Headers': 'Content-Type,Authorization',
     },
     body: JSON.stringify(error),
   };
@@ -175,6 +211,19 @@ export async function handler(
   );
 
   try {
+    // Extract user ID from Cognito authorizer
+    const userId = event.requestContext?.authorizer?.['claims']?.['sub'] as string;
+    if (!userId) {
+      return errorResponse(
+        401,
+        {
+          error: 'UNAUTHORIZED',
+          message: 'User not authenticated',
+        },
+        requestId,
+      );
+    }
+
     // Only support GET method
     const method = event.httpMethod;
     if (method !== 'GET') {
@@ -188,8 +237,11 @@ export async function handler(
       );
     }
 
-    // Fetch documents from DynamoDB
-    const documents = await fetchDocuments();
+    // Get workspaceId from query parameters
+    const workspaceId = event.queryStringParameters?.['workspaceId'];
+
+    // Fetch documents from DynamoDB for the selected workspace
+    const documents = await fetchDocuments(userId, workspaceId);
 
     logger.info(
       {

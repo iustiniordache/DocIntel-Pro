@@ -186,6 +186,7 @@ process.env['AWS_REGION'] = 'us-east-1';
 process.env['S3_DOCUMENTS_BUCKET'] = 'test-bucket';
 process.env['DYNAMODB_METADATA_TABLE'] = 'test-metadata-table';
 process.env['DYNAMODB_JOBS_TABLE'] = 'test-jobs-table';
+process.env['DYNAMODB_WORKSPACES_TABLE'] = 'test-workspaces-table';
 process.env['TEXTRACT_SNS_TOPIC_ARN'] = 'arn:aws:sns:us-east-1:123456789012:test-topic';
 process.env['TEXTRACT_ROLE_ARN'] = 'arn:aws:iam::123456789012:role/test-role';
 process.env['OPENSEARCH_DOMAIN'] = 'https://test-domain.us-east-1.es.amazonaws.com';
@@ -203,6 +204,7 @@ process.env['BEDROCK_LLM_MODEL_ID'] = 'anthropic.claude-3-haiku-20240307-v1:0';
 function createUploadEvent(
   filename: string,
   userId: string = 'test-user',
+  workspaceId: string = 'workspace-123',
 ): APIGatewayProxyEventV2 {
   return {
     version: '2.0',
@@ -230,16 +232,13 @@ function createUploadEvent(
       time: '01/Jan/2025:00:00:00 +0000',
       timeEpoch: 1704067200000,
       authorizer: {
-        jwt: {
-          claims: {
-            sub: userId,
-            email: 'test@example.com',
-          },
-          scopes: [],
+        claims: {
+          sub: userId,
+          email: 'test@example.com',
         },
       },
     },
-    body: JSON.stringify({ filename }),
+    body: JSON.stringify({ filename, workspaceId }),
     isBase64Encoded: false,
   } as APIGatewayProxyEventV2;
 }
@@ -422,18 +421,22 @@ function createMockEmbedding(dimensions: number = 1024): number[] {
 /**
  * Create mock Titan embedding response
  */
-function createTitanEmbeddingResponse(text: string): Uint8Array {
+function createTitanEmbeddingResponse(text: string) {
   const response = {
     embedding: createMockEmbedding(),
     inputTextTokenCount: Math.ceil(text.length / 4),
   };
-  return new TextEncoder().encode(JSON.stringify(response));
+  const responseStr = JSON.stringify(response);
+  const encoded = new TextEncoder().encode(responseStr);
+  return Object.assign(encoded, {
+    transformToString: () => responseStr,
+  });
 }
 
 /**
  * Create mock Claude response
  */
-function createClaudeResponse(answer: string): Uint8Array {
+function createClaudeResponse(answer: string) {
   const response = {
     id: 'msg-test-id',
     type: 'message',
@@ -451,7 +454,11 @@ function createClaudeResponse(answer: string): Uint8Array {
       output_tokens: 50,
     },
   };
-  return new TextEncoder().encode(JSON.stringify(response));
+  const responseStr = JSON.stringify(response);
+  const encoded = new TextEncoder().encode(responseStr);
+  return Object.assign(encoded, {
+    transformToString: () => responseStr,
+  });
 }
 
 // =============================================================================
@@ -486,6 +493,25 @@ describe('Integration: Complete Document Processing Pipeline', () => {
     mockOpenSearchClient.search.mockClear();
     mockOpenSearchClient.delete.mockClear();
     mockOpenSearchClient.deleteByQuery.mockClear();
+
+    // Mock workspace query for upload handler validation
+    // Use callsFake to dynamically return workspace matching any workspaceId
+    dynamoMock.on(QueryCommand).callsFake((input) => {
+      // The query uses workspaceId in KeyConditionExpression
+      const workspaceIdValue = input.ExpressionAttributeValues?.[':workspaceId'];
+      const workspaceId = workspaceIdValue?.S || 'workspace-123';
+
+      // Extract userId from the event context (not available here, so we need a different approach)
+      // For now, return a workspace that matches any user
+      return {
+        Items: [
+          {
+            workspaceId: { S: workspaceId },
+            ownerId: { S: 'test-user' }, // This will be overridden in specific tests if needed
+          },
+        ],
+      };
+    });
   });
 
   // ===========================================================================
@@ -528,6 +554,16 @@ describe('Integration: Complete Document Processing Pipeline', () => {
     });
 
     it('should create DynamoDB metadata record on upload', async () => {
+      // Override workspace mock for this specific test to match 'user-123'
+      dynamoMock.on(QueryCommand).resolves({
+        Items: [
+          {
+            workspaceId: { S: 'workspace-123' },
+            ownerId: { S: 'user-123' },
+          },
+        ],
+      });
+
       const event = createUploadEvent('test-document.pdf', 'user-123');
       const context = createContext();
 
@@ -569,7 +605,7 @@ describe('Integration: Complete Document Processing Pipeline', () => {
 
   describe('2. TextractStart Handler', () => {
     it('should process S3 event and initiate Textract job', async () => {
-      const event = createS3Event('test-bucket', 'documents/test-doc.pdf');
+      const event = createS3Event('test-bucket', 'user-123/workspace-123/test-doc.pdf');
       const context = createContext();
 
       s3Mock.on(HeadObjectCommand).resolves({
@@ -585,6 +621,7 @@ describe('Integration: Complete Document Processing Pipeline', () => {
         JobId: 'textract-job-123',
       });
 
+      dynamoMock.on(QueryCommand).resolves({ Items: [] });
       dynamoMock.on(PutItemCommand).resolves({});
 
       await textractStartHandler(event, context);
@@ -595,7 +632,7 @@ describe('Integration: Complete Document Processing Pipeline', () => {
       const call = textractCalls[0];
       expect(call.args[0].input.DocumentLocation?.S3Object?.Bucket).toBe('test-bucket');
       expect(call.args[0].input.DocumentLocation?.S3Object?.Name).toBe(
-        'documents/test-doc.pdf',
+        'user-123/workspace-123/test-doc.pdf',
       );
       expect(call.args[0].input.NotificationChannel?.SNSTopicArn).toBe(
         'arn:aws:sns:us-east-1:123456789012:test-topic',
@@ -603,7 +640,7 @@ describe('Integration: Complete Document Processing Pipeline', () => {
     });
 
     it('should save Textract job metadata to DynamoDB', async () => {
-      const event = createS3Event('test-bucket', 'documents/test-doc.pdf');
+      const event = createS3Event('test-bucket', 'user-123/workspace-123/test-doc.pdf');
       const context = createContext();
 
       s3Mock.on(HeadObjectCommand).resolves({
@@ -619,6 +656,7 @@ describe('Integration: Complete Document Processing Pipeline', () => {
         JobId: 'textract-job-123',
       });
 
+      dynamoMock.on(QueryCommand).resolves({ Items: [] });
       dynamoMock.on(PutItemCommand).resolves({});
 
       await textractStartHandler(event, context);
@@ -635,7 +673,7 @@ describe('Integration: Complete Document Processing Pipeline', () => {
     });
 
     it('should reject non-PDF S3 objects', async () => {
-      const event = createS3Event('test-bucket', 'documents/test-doc.txt');
+      const event = createS3Event('test-bucket', 'user-123/workspace-123/test-doc.txt');
       const context = createContext();
 
       s3Mock.on(HeadObjectCommand).resolves({
@@ -649,7 +687,7 @@ describe('Integration: Complete Document Processing Pipeline', () => {
     });
 
     it('should handle Textract service errors gracefully', async () => {
-      const event = createS3Event('test-bucket', 'documents/test-doc.pdf');
+      const event = createS3Event('test-bucket', 'user-123/workspace-123/test-doc.pdf');
       const context = createContext();
 
       s3Mock.on(HeadObjectCommand).resolves({
@@ -659,6 +697,9 @@ describe('Integration: Complete Document Processing Pipeline', () => {
           'document-id': 'test-doc-id',
         },
       });
+
+      dynamoMock.on(QueryCommand).resolves({ Items: [] });
+      dynamoMock.on(PutItemCommand).resolves({});
 
       textractMock
         .on(StartDocumentTextDetectionCommand)
@@ -843,24 +884,26 @@ describe('Integration: Complete Document Processing Pipeline', () => {
       // Create a large document with multiple lines
       const largeBlocks = [
         {
-          BlockType: 'PAGE',
+          BlockType: 'PAGE' as const,
           Id: 'page-1',
           Page: 1,
+          Geometry: { BoundingBox: {} },
           Relationships: [
             {
-              Type: 'CHILD',
+              Type: 'CHILD' as const,
               Ids: Array.from({ length: 50 }, (_, i) => `line-${i}`),
             },
           ],
         },
         ...Array.from({ length: 50 }, (_, i) => ({
-          BlockType: 'LINE',
+          BlockType: 'LINE' as const,
           Id: `line-${i}`,
           Text: `This is line ${i} with substantial content to test chunking. `.repeat(
             10,
           ),
           Page: 1,
           Confidence: 99.0,
+          Geometry: { BoundingBox: {} },
         })),
       ];
 
@@ -1249,7 +1292,9 @@ describe('Integration: Complete Document Processing Pipeline', () => {
         const bodyInput = claudeCall.args[0].input.body;
         // Body can be string or Uint8Array
         const bodyStr =
-          typeof bodyInput === 'string' ? bodyInput : new TextDecoder().decode(bodyInput);
+          typeof bodyInput === 'string'
+            ? bodyInput
+            : new TextDecoder().decode(bodyInput as Uint8Array);
         const body = JSON.parse(bodyStr);
 
         expect(body.messages).toBeDefined();
@@ -1274,8 +1319,14 @@ describe('Integration: Complete Document Processing Pipeline', () => {
       const response =
         typeof result === 'object' && 'statusCode' in result ? result : null;
 
-      // Should still generate URL (validation happens on actual upload)
+      // Upload handler generates presigned URL - actual validation happens when S3 receives the file
+      if (response?.statusCode !== 200) {
+        console.error('Upload failed:', response?.body);
+      }
       expect(response?.statusCode).toBe(200);
+      const body = JSON.parse(response?.body || '{}');
+      expect(body).toHaveProperty('uploadUrl');
+      expect(body).toHaveProperty('documentId');
     });
 
     it('should handle Textract job failures', async () => {
@@ -1490,6 +1541,41 @@ describe('Integration: Complete Document Processing Pipeline', () => {
 
   describe('8. End-to-End Pipeline', () => {
     it('should process complete pipeline from upload to query', async () => {
+      let capturedDocumentId: string | undefined;
+
+      // Override workspace mock conditionally for this specific test
+      dynamoMock.on(QueryCommand).callsFake((input) => {
+        // Check if this is a workspace query (has WorkspaceIdIndex) or job query (has TextractJobIdIndex)
+        if (input.IndexName === 'WorkspaceIdIndex') {
+          // Workspace query - return workspace with ownerId='user-123'
+          return {
+            Items: [
+              {
+                workspaceId: { S: 'workspace-123' },
+                ownerId: { S: 'user-123' },
+              },
+            ],
+          };
+        } else if (input.IndexName === 'TextractJobIdIndex') {
+          // Job query - return job data for textract-complete
+          const textractJobId = input.ExpressionAttributeValues?.[':jobId']?.S || '';
+          // Use captured documentId if available, otherwise fallback
+          const docId = capturedDocumentId || 'test-document-id';
+          return {
+            Items: [
+              {
+                jobId: { S: 'job-integration-test' },
+                documentId: { S: docId },
+                textractJobId: { S: textractJobId },
+                s3Key: { S: `documents/${docId}.pdf` },
+              },
+            ],
+          };
+        }
+        // Default fallback
+        return { Items: [] };
+      });
+
       const userId = 'user-123';
       const filename = 'integration-test.pdf';
       const question = 'What is in the integration test document?';
@@ -1511,6 +1597,9 @@ describe('Integration: Complete Document Processing Pipeline', () => {
       const uploadBody = JSON.parse(uploadResponse?.body || '{}');
       const documentId = uploadBody.documentId;
       expect(documentId).toBeDefined();
+
+      // Capture documentId for use in the conditional mock
+      capturedDocumentId = documentId;
 
       // Step 2: TextractStart
       const s3Event = createS3Event('test-bucket', `documents/${documentId}.pdf`);
@@ -1539,16 +1628,7 @@ describe('Integration: Complete Document Processing Pipeline', () => {
       );
       const textractCompleteContext = createContext();
 
-      dynamoMock.on(QueryCommand).resolves({
-        Items: [
-          {
-            jobId: { S: 'job-integration-test' },
-            documentId: { S: documentId },
-            textractJobId: { S: 'textract-job-integration-test' },
-            s3Key: { S: `documents/${documentId}.pdf` },
-          },
-        ],
-      });
+      // Job query is now handled by the conditional mock at the beginning of the test
 
       textractMock.on(GetDocumentTextDetectionCommand).resolves({
         JobStatus: 'SUCCEEDED',

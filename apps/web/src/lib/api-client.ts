@@ -52,15 +52,19 @@ export interface ErrorResponse {
  */
 export async function requestUploadUrl(
   filename: string,
-  contentType: string,
+  workspaceId: string,
+  idToken: string,
+  contentType: string = 'application/pdf',
 ): Promise<UploadResponse> {
   const response = await fetch(`${API_BASE_URL}/upload`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      Authorization: `Bearer ${idToken}`,
     },
     body: JSON.stringify({
       filename,
+      workspaceId,
       contentType,
     }),
   });
@@ -120,11 +124,15 @@ export async function uploadToS3(
 /**
  * Send query to RAG endpoint
  */
-export async function sendQuery(request: QueryRequest): Promise<QueryResponse> {
+export async function sendQuery(
+  request: QueryRequest,
+  idToken: string,
+): Promise<QueryResponse> {
   const response = await fetch(`${API_BASE_URL}/query`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      Authorization: `Bearer ${idToken}`,
     },
     body: JSON.stringify(request),
   });
@@ -163,17 +171,30 @@ export async function* streamQuery(request: QueryRequest): AsyncGenerator<string
 /**
  * List all documents with their status from backend
  */
-export async function listDocuments(): Promise<Document[]> {
+export async function listDocuments(workspaceId?: string): Promise<Document[]> {
   // Only fetch from backend on client side
   if (typeof window === 'undefined') {
     return [];
   }
 
+  // Return empty array if no workspace selected
+  if (!workspaceId) {
+    return [];
+  }
+
   try {
-    const response = await fetch(`${API_BASE_URL}/documents`, {
+    // Get the ID token from auth context
+    const tokens = JSON.parse(localStorage.getItem('auth_tokens') || '{}');
+    const idToken = tokens.idToken;
+
+    const url = new URL(`${API_BASE_URL}/documents`);
+    url.searchParams.append('workspaceId', workspaceId);
+
+    const response = await fetch(url.toString(), {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
+        ...(idToken && { Authorization: `Bearer ${idToken}` }),
       },
     });
 
