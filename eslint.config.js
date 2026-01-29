@@ -50,7 +50,7 @@ export default [
       '**/*.config.cts',
       '**/*.spec.ts',
       '**/*.test.ts',
-      '**/next-env.d.ts',
+      '**/*.d.ts',
     ],
     languageOptions: {
       parser: tsParser,
