@@ -19,8 +19,7 @@ const JSON_HEADERS = {
 };
 
 /**
- * Create a success response with data
- * Returns data directly at top level for backward compatibility
+ * Create a success response with data at top level (for query, upload endpoints)
  */
 export const successResponse = <T>(data: T, statusCode = 200): APIGatewayProxyResult => ({
   statusCode,
@@ -29,10 +28,22 @@ export const successResponse = <T>(data: T, statusCode = 200): APIGatewayProxyRe
 });
 
 /**
+ * Create a success response with data wrapped in { data: ... } (for workspace/document list endpoints)
+ */
+export const wrappedSuccessResponse = <T>(
+  data: T,
+  statusCode = 200,
+): APIGatewayProxyResult => ({
+  statusCode,
+  headers: JSON_HEADERS,
+  body: JSON.stringify({ data }),
+});
+
+/**
  * Create a created response (201)
  */
 export const createdResponse = <T>(data: T): APIGatewayProxyResult =>
-  successResponse(data, 201);
+  wrappedSuccessResponse(data, 201);
 
 /**
  * Create an error response

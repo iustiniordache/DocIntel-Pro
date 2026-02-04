@@ -10,7 +10,7 @@ import {
   config,
   extractUserId,
   getDynamoClient,
-  successResponse,
+  wrappedSuccessResponse,
   unauthorized,
   forbidden,
   notFound,
@@ -68,7 +68,7 @@ export const handler = async (
       return forbidden();
     }
 
-    return successResponse(workspace);
+    return wrappedSuccessResponse(workspace);
   } catch (error) {
     console.error('Error getting workspace:', error);
     return serverError('Failed to get workspace');

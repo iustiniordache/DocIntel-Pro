@@ -10,7 +10,7 @@ import {
   config,
   extractUserId,
   getDynamoClient,
-  successResponse,
+  wrappedSuccessResponse,
   unauthorized,
   serverError,
 } from './shared';
@@ -48,7 +48,7 @@ export const handler = async (
       unmarshall(item),
     ) as Workspace[];
 
-    return successResponse(workspaces);
+    return wrappedSuccessResponse(workspaces);
   } catch (error) {
     console.error('Error listing workspaces:', error);
     return serverError('Failed to list workspaces');
