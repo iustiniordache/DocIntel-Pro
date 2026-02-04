@@ -14,7 +14,7 @@ import {
   config,
   extractUserId,
   getDynamoClient,
-  successResponse,
+  wrappedSuccessResponse,
   unauthorized,
   forbidden,
   notFound,
@@ -125,7 +125,7 @@ export const handler = async (
       updatedAt: new Date().toISOString(),
     };
 
-    return successResponse(updatedWorkspace);
+    return wrappedSuccessResponse(updatedWorkspace);
   } catch (error) {
     console.error('Error updating workspace:', error);
     return serverError('Failed to update workspace');
