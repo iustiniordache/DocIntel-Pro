@@ -27,8 +27,6 @@ pnpm deploy:web
 pnpm deploy:web:content
 ```
 
-**See**: [WEB_QUICKSTART.md](./WEB_QUICKSTART.md) for detailed web deployment guide.
-
 ### Deploy API
 
 ```bash
@@ -60,8 +58,6 @@ infra/
 │   └── minimal-stack.ts          # Minimal deployment (testing)
 ├── scripts/
 │   └── deploy-web-content.js     # Web content deployment script
-├── WEB_DEPLOYMENT.md             # Complete web deployment guide
-├── WEB_QUICKSTART.md             # Quick start for web deployment
 ├── cdk.json                      # CDK configuration
 └── package.json                  # Scripts and dependencies
 ```
@@ -245,7 +241,8 @@ cdk bootstrap aws://ACCOUNT-ID/REGION
 
 ### Custom Domain
 
-See [WEB_DEPLOYMENT.md](./WEB_DEPLOYMENT.md#custom-domain-optional) for instructions.
+To add a custom domain, create an ACM certificate in us-east-1 and update the web-stack.ts
+with the domain configuration.
 
 ### Environment-Specific Stacks
 
@@ -391,8 +388,6 @@ aws cloudformation create-stack --template-body file://template.json
 - [AWS CDK Documentation](https://docs.aws.amazon.com/cdk/)
 - [CloudFront Best Practices](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/best-practices.html)
 - [Next.js Deployment](https://nextjs.org/docs/deployment)
-- [Web Deployment Guide](./WEB_DEPLOYMENT.md)
-- [Web Quick Start](./WEB_QUICKSTART.md)
 
 ## 🤝 Contributing
 
