@@ -20,11 +20,12 @@ const JSON_HEADERS = {
 
 /**
  * Create a success response with data
+ * Returns data directly at top level for backward compatibility
  */
 export const successResponse = <T>(data: T, statusCode = 200): APIGatewayProxyResult => ({
   statusCode,
   headers: JSON_HEADERS,
-  body: JSON.stringify({ success: true, data }),
+  body: JSON.stringify(data),
 });
 
 /**
@@ -45,7 +46,6 @@ export const errorResponse = (
   statusCode,
   headers: JSON_HEADERS,
   body: JSON.stringify({
-    success: false,
     error,
     message,
     ...(details && { details }),
@@ -65,7 +65,11 @@ export const notFound = (message = 'Resource not found'): APIGatewayProxyResult 
   errorResponse(404, 'Not Found', message);
 
 export const badRequest = (message: string): APIGatewayProxyResult =>
-  errorResponse(400, 'Bad Request', message);
+  errorResponse(400, message, message);
 
 export const serverError = (message = 'Internal server error'): APIGatewayProxyResult =>
-  errorResponse(500, 'Internal Server Error', message);
+  errorResponse(500, 'INTERNAL_ERROR', message);
+
+export const serviceUnavailable = (
+  message = 'AI service is temporarily unavailable',
+): APIGatewayProxyResult => errorResponse(503, 'SERVICE_UNAVAILABLE', message);

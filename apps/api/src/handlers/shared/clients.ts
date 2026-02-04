@@ -62,3 +62,13 @@ export const getBedrockClient = (): BedrockRuntimeClient => {
   }
   return bedrockClient;
 };
+
+/**
+ * Reset all client singletons (for testing purposes)
+ */
+export const resetClients = (): void => {
+  dynamoClient = null;
+  s3Client = null;
+  textractClient = null;
+  bedrockClient = null;
+};

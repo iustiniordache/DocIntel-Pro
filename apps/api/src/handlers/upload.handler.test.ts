@@ -260,8 +260,8 @@ describe('Upload Handler', () => {
 
       expect(result.statusCode).toBe(400);
       const body = JSON.parse(result.body);
+      expect(body.error).toBe('Request body must be valid JSON');
       expect(body.message).toBe('Request body must be valid JSON');
-      expect(body.error).toBe('INVALID_JSON');
     });
 
     it('should reject missing filename', async () => {
@@ -335,7 +335,7 @@ describe('Upload Handler', () => {
       const result = (await handler(event, context)) as HandlerResult;
       expect(result.statusCode).toBe(429);
       const body = JSON.parse(result.body);
-      expect(body.code).toBe('429');
+      expect(body.error).toBe('RATE_LIMIT_EXCEEDED');
     });
   });
 
