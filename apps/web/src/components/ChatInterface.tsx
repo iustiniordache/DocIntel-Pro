@@ -20,12 +20,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/
 import { cn, formatDate } from '../lib/utils';
 
 export interface ChatInterfaceProps {
-  documentId?: string;
   placeholder?: string;
 }
 
 export function ChatInterface({
-  documentId,
   placeholder = 'Ask a question about your documents...',
 }: ChatInterfaceProps) {
   const { queryState, messages, sendMessage, clearMessages } = useQuery();
@@ -47,9 +45,9 @@ export function ChatInterface({
 
       const q = question;
       setQuestion('');
-      await sendMessage(q, documentId);
+      await sendMessage(q);
     },
-    [question, queryState.isLoading, sendMessage, documentId],
+    [question, queryState.isLoading, sendMessage],
   );
 
   const handleKeyDown = useCallback(
@@ -68,11 +66,7 @@ export function ChatInterface({
         <div className="flex items-center justify-between">
           <div>
             <CardTitle>Chat</CardTitle>
-            <CardDescription>
-              {documentId
-                ? 'Ask questions about the uploaded document'
-                : 'Ask questions about all your documents'}
-            </CardDescription>
+            <CardDescription>Ask questions about all your documents</CardDescription>
           </div>
           {messages.length > 0 && (
             <Button variant="outline" size="sm" onClick={clearMessages}>

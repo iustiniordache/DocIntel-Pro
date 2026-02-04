@@ -318,7 +318,10 @@ function createTextractCompleteEvent(
 /**
  * Create a mock query event
  */
-function createQueryEvent(question: string, documentId?: string): APIGatewayProxyEventV2 {
+function createQueryEvent(
+  question: string,
+  workspaceId?: string,
+): APIGatewayProxyEventV2 {
   return {
     version: '2.0',
     routeKey: 'POST /query',
@@ -345,7 +348,7 @@ function createQueryEvent(question: string, documentId?: string): APIGatewayProx
       time: '01/Jan/2025:00:00:00 +0000',
       timeEpoch: 1704067200000,
     },
-    body: JSON.stringify({ question, documentId }),
+    body: JSON.stringify({ question, workspaceId }),
     isBase64Encoded: false,
   } as APIGatewayProxyEventV2;
 }
@@ -1101,15 +1104,15 @@ describe('Integration: Complete Document Processing Pipeline', () => {
       expect(body.sources).toBeDefined();
     });
 
-    it('should filter search results by document ID', async () => {
-      const event = createQueryEvent('What is in the document?', 'specific-doc-id');
+    it('should filter search results by workspace ID', async () => {
+      const event = createQueryEvent('What is in the document?', 'workspace-123');
       const context = createContext();
 
       bedrockMock.on(InvokeModelCommand).resolves({
         body: createTitanEmbeddingResponse('What is in the document?'),
       });
 
-      // Override search mock to return specific document
+      // Override search mock to return specific workspace document
       mockOpenSearchClient.search.mockResolvedValueOnce({
         body: {
           hits: {
@@ -1119,9 +1122,14 @@ describe('Integration: Complete Document Processing Pipeline', () => {
                 _id: 'chunk-1',
                 _score: 0.95,
                 _source: {
-                  documentId: 'specific-doc-id',
+                  documentId: 'doc-123',
                   content: 'Relevant content',
                   embedding: createMockEmbedding(),
+                  metadata: {
+                    workspaceId: 'workspace-123',
+                    page: 1,
+                    source: 'test.pdf',
+                  },
                 },
               },
             ],
@@ -1139,7 +1147,7 @@ describe('Integration: Complete Document Processing Pipeline', () => {
       expect(body.sources).toBeDefined();
       expect(Array.isArray(body.sources)).toBe(true);
       if (body.sources.length > 0) {
-        expect(body.sources[0].documentId).toBe('specific-doc-id');
+        expect(body.sources[0].documentId).toBe('doc-123');
       }
     });
   });

@@ -16,7 +16,7 @@ export interface UploadResponse {
 
 export interface QueryRequest {
   question: string;
-  documentId?: string;
+  workspaceId?: string;
 }
 
 export interface Source {
