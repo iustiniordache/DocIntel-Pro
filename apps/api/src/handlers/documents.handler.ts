@@ -5,9 +5,17 @@
  */
 
 import { APIGatewayProxyEvent, APIGatewayProxyResult, Context } from 'aws-lambda';
-import { DynamoDBClient, QueryCommand } from '@aws-sdk/client-dynamodb';
+import { QueryCommand } from '@aws-sdk/client-dynamodb';
 import { marshall, unmarshall } from '@aws-sdk/util-dynamodb';
-import pino from 'pino';
+import {
+  config,
+  extractUserId,
+  getDynamoClient,
+  getLogger,
+  successResponse,
+  unauthorized,
+  errorResponse,
+} from './shared';
 
 interface Document {
   documentId: string;
@@ -17,48 +25,6 @@ interface Document {
   pageCount?: number;
   fileSize?: number;
   processedAt?: string;
-}
-
-interface ErrorResponse {
-  error: string;
-  message: string;
-}
-
-// Configuration from environment variables
-const CONFIG = {
-  aws: {
-    region: process.env['AWS_REGION'] || 'us-east-1',
-  },
-  dynamodb: {
-    metadataTable: process.env['DYNAMODB_METADATA_TABLE'] || '',
-    workspacesTable: process.env['DYNAMODB_WORKSPACES_TABLE'] || '',
-  },
-  logging: {
-    level: process.env['LOG_LEVEL'] || 'info',
-  },
-};
-
-// Lazy initialization of AWS clients
-let dynamoClient: DynamoDBClient;
-let logger: pino.Logger;
-
-function initializeServices() {
-  if (!dynamoClient) {
-    dynamoClient = new DynamoDBClient({
-      region: CONFIG.aws.region,
-    });
-
-    logger = pino({
-      level: CONFIG.logging.level,
-      formatters: {
-        level: (label) => {
-          return { level: label };
-        },
-      },
-    });
-
-    logger.info('Services initialized');
-  }
 }
 
 /**
@@ -85,6 +51,9 @@ function mapStatus(dbStatus: string): string {
  * Fetch documents from DynamoDB for a specific workspace
  */
 async function fetchDocuments(userId: string, workspaceId?: string): Promise<Document[]> {
+  const cfg = config();
+  const dynamoClient = getDynamoClient();
+
   // If no workspaceId provided, return empty array
   if (!workspaceId) {
     return [];
@@ -93,7 +62,7 @@ async function fetchDocuments(userId: string, workspaceId?: string): Promise<Doc
   // Verify workspace ownership
   const workspaceCheck = await dynamoClient.send(
     new QueryCommand({
-      TableName: CONFIG.dynamodb.workspacesTable,
+      TableName: cfg.dynamodb.workspacesTable,
       IndexName: 'WorkspaceIdIndex',
       KeyConditionExpression: 'workspaceId = :workspaceId',
       ExpressionAttributeValues: marshall({
@@ -102,11 +71,7 @@ async function fetchDocuments(userId: string, workspaceId?: string): Promise<Doc
     }),
   );
 
-  if (!workspaceCheck.Items || workspaceCheck.Items.length === 0) {
-    return [];
-  }
-
-  const workspaceItem = workspaceCheck.Items[0];
+  const workspaceItem = workspaceCheck.Items?.[0];
   if (!workspaceItem) {
     return [];
   }
@@ -120,7 +85,7 @@ async function fetchDocuments(userId: string, workspaceId?: string): Promise<Doc
   // Fetch documents for the workspace
   const documentsResponse = await dynamoClient.send(
     new QueryCommand({
-      TableName: CONFIG.dynamodb.metadataTable,
+      TableName: cfg.dynamodb.metadataTable,
       KeyConditionExpression: 'workspaceId = :workspaceId',
       ExpressionAttributeValues: marshall({
         ':workspaceId': workspaceId,
@@ -155,55 +120,13 @@ async function fetchDocuments(userId: string, workspaceId?: string): Promise<Doc
 }
 
 /**
- * Create success response
- */
-function successResponse(
-  documents: Document[],
-  requestId: string,
-): APIGatewayProxyResult {
-  return {
-    statusCode: 200,
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Request-ID': requestId,
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET,OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type,Authorization',
-    },
-    body: JSON.stringify(documents),
-  };
-}
-
-/**
- * Create error response
- */
-function errorResponse(
-  statusCode: number,
-  error: ErrorResponse,
-  requestId: string,
-): APIGatewayProxyResult {
-  return {
-    statusCode,
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Request-ID': requestId,
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET,OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type,Authorization',
-    },
-    body: JSON.stringify(error),
-  };
-}
-
-/**
  * Main Lambda handler
  */
 export async function handler(
   event: APIGatewayProxyEvent,
   context: Context,
 ): Promise<APIGatewayProxyResult> {
-  initializeServices();
-
+  const logger = getLogger();
   const requestId = context.awsRequestId;
 
   logger.info(
@@ -216,30 +139,14 @@ export async function handler(
   );
 
   try {
-    // Extract user ID from Cognito authorizer
-    const userId = event.requestContext?.authorizer?.['claims']?.['sub'] as string;
+    const userId = extractUserId(event);
     if (!userId) {
-      return errorResponse(
-        401,
-        {
-          error: 'UNAUTHORIZED',
-          message: 'User not authenticated',
-        },
-        requestId,
-      );
+      return unauthorized('User not authenticated');
     }
 
     // Only support GET method
-    const method = event.httpMethod;
-    if (method !== 'GET') {
-      return errorResponse(
-        405,
-        {
-          error: 'METHOD_NOT_ALLOWED',
-          message: 'Only GET method is supported',
-        },
-        requestId,
-      );
+    if (event.httpMethod !== 'GET') {
+      return errorResponse(405, 'METHOD_NOT_ALLOWED', 'Only GET method is supported');
     }
 
     // Get workspaceId from query parameters
@@ -256,7 +163,7 @@ export async function handler(
       'Documents fetched successfully',
     );
 
-    return successResponse(documents, requestId);
+    return successResponse(documents);
   } catch (error) {
     logger.error(
       {
@@ -267,13 +174,6 @@ export async function handler(
       'Error fetching documents',
     );
 
-    return errorResponse(
-      500,
-      {
-        error: 'INTERNAL_ERROR',
-        message: 'Failed to fetch documents',
-      },
-      requestId,
-    );
+    return errorResponse(500, 'INTERNAL_ERROR', 'Failed to fetch documents');
   }
 }

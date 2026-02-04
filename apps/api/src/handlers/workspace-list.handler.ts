@@ -4,8 +4,16 @@
  */
 
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
-import { DynamoDBClient, QueryCommand } from '@aws-sdk/client-dynamodb';
+import { QueryCommand } from '@aws-sdk/client-dynamodb';
 import { unmarshall } from '@aws-sdk/util-dynamodb';
+import {
+  config,
+  extractUserId,
+  getDynamoClient,
+  successResponse,
+  unauthorized,
+  serverError,
+} from './shared';
 
 interface Workspace {
   workspaceId: string;
@@ -17,35 +25,18 @@ interface Workspace {
   documentCount?: number;
 }
 
-const dynamoClient = new DynamoDBClient({
-  region: process.env['AWS_REGION'] || 'us-east-1',
-});
-const WORKSPACES_TABLE = process.env['DYNAMODB_WORKSPACES_TABLE'] || '';
-
 export const handler = async (
   event: APIGatewayProxyEvent,
 ): Promise<APIGatewayProxyResult> => {
   try {
-    // Extract user ID from Cognito authorizer (REST API format)
-    const userId = event.requestContext?.authorizer?.['claims']?.['sub'] as string;
+    const userId = extractUserId(event);
     if (!userId) {
-      return {
-        statusCode: 401,
-        headers: {
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
-        },
-        body: JSON.stringify({
-          error: 'Unauthorized',
-          message: 'User not authenticated',
-        }),
-      };
+      return unauthorized();
     }
 
-    // Query workspaces by ownerId
-    const result = await dynamoClient.send(
+    const result = await getDynamoClient().send(
       new QueryCommand({
-        TableName: WORKSPACES_TABLE,
+        TableName: config().dynamodb.workspacesTable,
         KeyConditionExpression: 'ownerId = :ownerId',
         ExpressionAttributeValues: {
           ':ownerId': { S: userId },
@@ -57,28 +48,9 @@ export const handler = async (
       unmarshall(item),
     ) as Workspace[];
 
-    return {
-      statusCode: 200,
-      headers: {
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Headers': 'Content-Type,Authorization',
-        'Access-Control-Allow-Methods': 'GET,OPTIONS',
-      },
-      body: JSON.stringify({ success: true, data: workspaces }),
-    };
+    return successResponse(workspaces);
   } catch (error) {
     console.error('Error listing workspaces:', error);
-    return {
-      statusCode: 500,
-      headers: {
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
-      },
-      body: JSON.stringify({
-        error: 'Internal Server Error',
-        message: 'Failed to list workspaces',
-      }),
-    };
+    return serverError('Failed to list workspaces');
   }
 };
