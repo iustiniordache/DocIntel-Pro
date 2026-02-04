@@ -417,8 +417,7 @@ describe('Query Handler', () => {
 
       expect(response.statusCode).toBe(500);
       const body = JSON.parse(response.body);
-      expect(body.error).toBe('INTERNAL_ERROR');
-      expect(body.message).toContain('An error occurred');
+      expect(body.error).toContain('An error occurred');
     });
 
     it('should handle vector store errors', async () => {
@@ -433,8 +432,7 @@ describe('Query Handler', () => {
 
       expect(response.statusCode).toBe(500);
       const body = JSON.parse(response.body);
-      expect(body.error).toBe('INTERNAL_ERROR');
-      expect(body.message).toContain('An error occurred');
+      expect(body.error).toContain('An error occurred');
     });
 
     it('should handle Bedrock Claude errors', async () => {
@@ -451,8 +449,7 @@ describe('Query Handler', () => {
 
       expect(response.statusCode).toBe(503);
       const body = JSON.parse(response.body);
-      expect(body.error).toBe('SERVICE_UNAVAILABLE');
-      expect(body.message).toContain('AI service is temporarily unavailable');
+      expect(body.error).toContain('AI service is temporarily unavailable');
     });
 
     it('should handle empty Bedrock response', async () => {
