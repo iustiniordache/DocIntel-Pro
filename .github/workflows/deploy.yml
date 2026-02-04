@@ -391,7 +391,6 @@ jobs:
     needs: [cdk-synth, build-api]
     runs-on: ubuntu-latest
     if: |
-      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') &&
       needs.build-api.result == 'success' &&
       needs.cdk-synth.result == 'success'
     environment:

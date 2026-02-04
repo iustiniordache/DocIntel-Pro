@@ -7,6 +7,7 @@
 import { useState, useCallback } from 'react';
 import { sendQuery, type QueryRequest, type QueryResponse } from '../lib/api-client';
 import { useAuth } from '../contexts/AuthContext';
+import { useWorkspace } from '../contexts/WorkspaceContext';
 
 export interface QueryState {
   isLoading: boolean;
@@ -26,13 +27,14 @@ export interface Message {
 export interface UseQueryReturn {
   queryState: QueryState;
   messages: Message[];
-  sendMessage: (question: string, documentId?: string) => Promise<void>;
+  sendMessage: (question: string) => Promise<void>;
   clearMessages: () => void;
   reset: () => void;
 }
 
 export function useQuery(): UseQueryReturn {
   const { getIdToken } = useAuth();
+  const { selectedWorkspace } = useWorkspace();
   const [queryState, setQueryState] = useState<QueryState>({
     isLoading: false,
     error: null,
@@ -55,7 +57,7 @@ export function useQuery(): UseQueryReturn {
   }, [reset]);
 
   const sendMessage = useCallback(
-    async (question: string, documentId?: string): Promise<void> => {
+    async (question: string) => {
       // Validate question
       if (!question.trim()) {
         setQueryState({
@@ -70,6 +72,16 @@ export function useQuery(): UseQueryReturn {
         setQueryState({
           isLoading: false,
           error: 'Question must be 500 characters or less',
+          response: null,
+        });
+        return;
+      }
+
+      // Check if workspace is selected
+      if (!selectedWorkspace) {
+        setQueryState({
+          isLoading: false,
+          error: 'Please select a workspace first',
           response: null,
         });
         return;
@@ -95,7 +107,7 @@ export function useQuery(): UseQueryReturn {
         // Send query
         const request: QueryRequest = {
           question,
-          ...(documentId && { documentId }),
+          workspaceId: selectedWorkspace.workspaceId,
         };
 
         const idToken = await getIdToken();
@@ -138,7 +150,7 @@ export function useQuery(): UseQueryReturn {
         setMessages((prev) => [...prev, errorMsg]);
       }
     },
-    [],
+    [getIdToken, selectedWorkspace],
   );
 
   return {

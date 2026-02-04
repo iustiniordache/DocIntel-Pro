@@ -32,125 +32,114 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/
 import { cn, formatBytes, formatDate } from '../lib/utils';
 import { useWorkspace } from '../contexts/WorkspaceContext';
 
-export interface DocumentManagementProps {
-  onDocumentSelect?: (documentId: string) => void;
-}
-
 export interface DocumentManagementRef {
   refresh: () => Promise<void>;
 }
 
-export const DocumentManagement = forwardRef<
-  DocumentManagementRef,
-  DocumentManagementProps
->(({ onDocumentSelect }, ref) => {
-  const [documents, setDocuments] = useState<Document[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
-  const { selectedWorkspace } = useWorkspace();
+export const DocumentManagement = forwardRef<DocumentManagementRef, object>(
+  (_props, ref) => {
+    const [documents, setDocuments] = useState<Document[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [deletingId, setDeletingId] = useState<string | null>(null);
+    const { selectedWorkspace } = useWorkspace();
 
-  const loadDocuments = useCallback(async () => {
-    setLoading(true);
-    try {
-      const docs = await listDocuments(selectedWorkspace?.workspaceId);
-      setDocuments(
-        docs.sort(
-          (a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime(),
-        ),
-      );
-    } catch (error) {
-      console.error('Failed to load documents:', error);
-    } finally {
-      setLoading(false);
-    }
-  }, [selectedWorkspace?.workspaceId]);
-
-  // Expose refresh method to parent
-  useImperativeHandle(ref, () => ({
-    refresh: loadDocuments,
-  }));
-
-  useEffect(() => {
-    loadDocuments();
-  }, [loadDocuments]);
-
-  const handleDelete = useCallback(
-    async (documentId: string) => {
-      if (!confirm('Are you sure you want to delete this document?')) {
-        return;
-      }
-
-      setDeletingId(documentId);
+    const loadDocuments = useCallback(async () => {
+      setLoading(true);
       try {
-        await deleteDocument(documentId);
-        await loadDocuments();
+        const docs = await listDocuments(selectedWorkspace?.workspaceId);
+        setDocuments(
+          docs.sort(
+            (a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime(),
+          ),
+        );
       } catch (error) {
-        console.error('Failed to delete document:', error);
-        alert('Failed to delete document');
+        console.error('Failed to load documents:', error);
       } finally {
-        setDeletingId(null);
+        setLoading(false);
       }
-    },
-    [loadDocuments],
-  );
+    }, [selectedWorkspace?.workspaceId]);
 
-  return (
-    <Card className="w-full">
-      <CardHeader>
-        <CardTitle>Documents</CardTitle>
-        <CardDescription>
-          Manage your uploaded documents ({documents.length})
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        {loading && documents.length === 0 ? (
-          <div className="flex items-center justify-center py-12">
-            <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
-          </div>
-        ) : documents.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-12 text-center">
-            <FileText className="w-12 h-12 text-muted-foreground/50 mb-4" />
-            <p className="text-lg font-medium text-muted-foreground">No documents yet</p>
-            <p className="text-sm text-muted-foreground/75 mt-1">
-              Upload a document to get started
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {documents.map((document) => (
-              <DocumentItem
-                key={document.documentId}
-                document={document}
-                onDelete={handleDelete}
-                onSelect={onDocumentSelect}
-                isDeleting={deletingId === document.documentId}
-              />
-            ))}
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-});
+    // Expose refresh method to parent
+    useImperativeHandle(ref, () => ({
+      refresh: loadDocuments,
+    }));
+
+    useEffect(() => {
+      loadDocuments();
+    }, [loadDocuments]);
+
+    const handleDelete = useCallback(
+      async (documentId: string) => {
+        if (!confirm('Are you sure you want to delete this document?')) {
+          return;
+        }
+
+        setDeletingId(documentId);
+        try {
+          await deleteDocument(documentId);
+          await loadDocuments();
+        } catch (error) {
+          console.error('Failed to delete document:', error);
+          alert('Failed to delete document');
+        } finally {
+          setDeletingId(null);
+        }
+      },
+      [loadDocuments],
+    );
+
+    return (
+      <Card className="w-full">
+        <CardHeader>
+          <CardTitle>Documents</CardTitle>
+          <CardDescription>
+            Manage your uploaded documents ({documents.length})
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {loading && documents.length === 0 ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+            </div>
+          ) : documents.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12 text-center">
+              <FileText className="w-12 h-12 text-muted-foreground/50 mb-4" />
+              <p className="text-lg font-medium text-muted-foreground">
+                No documents yet
+              </p>
+              <p className="text-sm text-muted-foreground/75 mt-1">
+                Upload a document to get started
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {documents.map((document) => (
+                <DocumentItem
+                  key={document.documentId}
+                  document={document}
+                  onDelete={handleDelete}
+                  isDeleting={deletingId === document.documentId}
+                />
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    );
+  },
+);
 
 DocumentManagement.displayName = 'DocumentManagement';
 
 interface DocumentItemProps {
   document: Document;
   onDelete: (documentId: string) => void;
-  onSelect?: (documentId: string) => void;
   isDeleting: boolean;
 }
 
-function DocumentItem({ document, onDelete, onSelect, isDeleting }: DocumentItemProps) {
+function DocumentItem({ document, onDelete, isDeleting }: DocumentItemProps) {
   return (
-    <div
-      className={cn(
-        'flex items-center gap-3 p-4 rounded-lg border bg-card hover:bg-muted/50 transition-colors',
-        onSelect && 'cursor-pointer',
-      )}
-      onClick={() => onSelect?.(document.documentId)}
-    >
+    <div className="flex items-center gap-3 p-4 rounded-lg border bg-card">
       <div className="flex-shrink-0">
         <FileText className="w-10 h-10 text-muted-foreground" />
       </div>

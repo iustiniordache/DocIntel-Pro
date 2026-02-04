@@ -225,9 +225,10 @@ async function indexChunks(
   documentId: string,
   filename: string,
   chunks: Array<{ text: string; pageNumber: number }>,
+  workspaceId: string,
 ): Promise<void> {
   logger.info(
-    { documentId, chunkCount: chunks.length },
+    { documentId, chunkCount: chunks.length, workspaceId },
     'Indexing chunks into OpenSearch',
   );
 
@@ -254,6 +255,7 @@ async function indexChunks(
         metadata: {
           page: chunk.pageNumber,
           source: filename,
+          workspaceId,
           timestamp: new Date().toISOString(),
         },
       },
@@ -806,7 +808,7 @@ async function processRecord(record: SNSEventRecord, requestId: string): Promise
     logger.info({ documentId, chunkCount: allChunks.length }, 'Text chunked');
 
     // Index chunks into OpenSearch
-    await indexChunks(documentId, filename, allChunks);
+    await indexChunks(documentId, filename, allChunks, workspaceId);
 
     logger.info(
       { documentId, chunkCount: allChunks.length },
