@@ -29,19 +29,30 @@
  */
 
 import { APIGatewayProxyEvent, APIGatewayProxyResult, Context } from 'aws-lambda';
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import {
-  DynamoDBClient,
   PutItemCommand,
   PutItemCommandInput,
   QueryCommand,
 } from '@aws-sdk/client-dynamodb';
 import { marshall } from '@aws-sdk/util-dynamodb';
 import { randomUUID } from 'crypto';
-import pino from 'pino';
+import {
+  config,
+  extractUserId,
+  getDynamoClient,
+  getS3Client,
+  getLogger,
+  successResponse as sharedSuccessResponse,
+  unauthorized,
+  forbidden,
+  notFound,
+  badRequest,
+  errorResponse,
+} from './shared';
 
-// Import types from shared package
+// Types
 interface UploadRequestBody {
   filename: string;
   workspaceId: string;
@@ -81,56 +92,7 @@ const DocumentStatus = {
   FAILED: 'FAILED',
 } as const;
 
-// Configuration constants
-const MAX_FILENAME_LENGTH = 100;
-const RATE_LIMIT_MAX = 10; // Max uploads per minute
 const ALLOWED_CONTENT_TYPE = 'application/pdf';
-
-// Configuration from environment variables
-const CONFIG = {
-  aws: {
-    region: process.env['AWS_REGION'] || 'us-east-1',
-    accountId: process.env['AWS_ACCOUNT_ID'] || '',
-  },
-  s3: {
-    documentsBucket: process.env['S3_DOCUMENTS_BUCKET'] || '',
-    presignedUrlExpiry: parseInt(process.env['S3_PRESIGNED_URL_EXPIRY'] || '300', 10),
-  },
-  dynamodb: {
-    metadataTable: process.env['DYNAMODB_METADATA_TABLE'] || '',
-    jobsTable: process.env['DYNAMODB_JOBS_TABLE'] || '',
-    workspacesTable: process.env['DYNAMODB_WORKSPACES_TABLE'] || '',
-  },
-  logging: {
-    level: process.env['LOG_LEVEL'] || 'info',
-  },
-};
-
-// Lazy initialization of AWS clients
-let s3Client: S3Client;
-let dynamoClient: DynamoDBClient;
-let logger: pino.Logger;
-
-async function initializeServices() {
-  if (!s3Client) {
-    s3Client = new S3Client({
-      region: CONFIG.aws.region,
-    });
-
-    dynamoClient = new DynamoDBClient({
-      region: CONFIG.aws.region,
-    });
-
-    logger = pino({
-      level: CONFIG.logging.level,
-      formatters: {
-        level: (label) => ({ level: label }),
-      },
-    });
-
-    logger.info('Services initialized');
-  }
-}
 
 // In-memory rate limiter (simple implementation)
 const rateLimiter = new Map<string, { count: number; resetAt: number }>();
@@ -146,6 +108,7 @@ export function resetRateLimiter(): void {
  * Rate limiting check
  */
 function checkRateLimit(clientId: string): boolean {
+  const cfg = config();
   const now = Date.now();
   const limit = rateLimiter.get(clientId);
 
@@ -157,7 +120,7 @@ function checkRateLimit(clientId: string): boolean {
     return true;
   }
 
-  if (limit.count >= RATE_LIMIT_MAX) {
+  if (limit.count >= cfg.validation.rateLimitMax) {
     return false;
   }
 
@@ -169,6 +132,8 @@ function checkRateLimit(clientId: string): boolean {
  * Sanitize filename to prevent path traversal and injection attacks
  */
 function sanitizeFilename(filename: string): string {
+  const cfg = config();
+
   // Remove path traversal
   let sanitized = filename.replace(/\.\.\//g, '').replace(/\\/g, '');
 
@@ -176,11 +141,11 @@ function sanitizeFilename(filename: string): string {
   sanitized = sanitized.replace(/[^a-zA-Z0-9.\-_]/g, '_');
 
   // Trim to max length
-  if (sanitized.length > MAX_FILENAME_LENGTH) {
+  if (sanitized.length > cfg.validation.maxFilenameLength) {
     const ext = sanitized.split('.').pop();
     const nameWithoutExt = sanitized.slice(
       0,
-      MAX_FILENAME_LENGTH - (ext?.length || 0) - 1,
+      cfg.validation.maxFilenameLength - (ext?.length || 0) - 1,
     );
     sanitized = `${nameWithoutExt}.${ext}`;
   }
@@ -258,14 +223,18 @@ function validateRequestBody(body: unknown): {
  * Save document metadata to DynamoDB
  */
 async function saveDocumentMetadata(metadata: DocumentMetadata): Promise<void> {
+  const cfg = config();
+  const logger = getLogger();
+  const dynamoClient = getDynamoClient();
+
   const params: PutItemCommandInput = {
-    TableName: CONFIG.dynamodb.metadataTable,
+    TableName: cfg.dynamodb.metadataTable,
     Item: marshall(metadata),
   };
 
   await dynamoClient.send(new PutItemCommand(params));
   logger.info(
-    { documentId: metadata.documentId, table: CONFIG.dynamodb.metadataTable },
+    { documentId: metadata.documentId, table: cfg.dynamodb.metadataTable },
     'Document metadata saved',
   );
 }
@@ -281,11 +250,15 @@ async function generatePresignedUrl(
   filename: string,
   contentType: string,
 ): Promise<{ uploadUrl: string; s3Key: string }> {
+  const cfg = config();
+  const logger = getLogger();
+  const s3Client = getS3Client();
+
   const sanitizedFilename = sanitizeFilename(filename);
   const s3Key = `${userId}/${workspaceId}/${sanitizedFilename}`;
 
   const command = new PutObjectCommand({
-    Bucket: CONFIG.s3.documentsBucket,
+    Bucket: cfg.s3.documentsBucket,
     Key: s3Key,
     ContentType: contentType,
     Metadata: {
@@ -297,51 +270,15 @@ async function generatePresignedUrl(
   });
 
   const uploadUrl = await getSignedUrl(s3Client, command, {
-    expiresIn: CONFIG.s3.presignedUrlExpiry,
+    expiresIn: cfg.s3.presignedUrlExpiry,
   });
 
   logger.info(
-    { documentId, s3Key, bucket: CONFIG.s3.documentsBucket },
+    { documentId, s3Key, bucket: cfg.s3.documentsBucket },
     'Presigned URL generated',
   );
 
   return { uploadUrl, s3Key };
-}
-
-/**
- * Create error response
- */
-function errorResponse(
-  statusCode: number,
-  error: UploadError,
-  requestId: string,
-): APIGatewayProxyResult {
-  logger.error({ statusCode, error, requestId }, 'Request failed');
-
-  return {
-    statusCode,
-    headers: {
-      'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': '*', // Configure as needed
-      'X-Request-Id': requestId,
-    },
-    body: JSON.stringify(error),
-  };
-}
-
-/**
- * Create success response
- */
-function successResponse(data: UploadResponse, requestId: string): APIGatewayProxyResult {
-  return {
-    statusCode: 200,
-    headers: {
-      'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': '*', // Configure as needed
-      'X-Request-Id': requestId,
-    },
-    body: JSON.stringify(data),
-  };
 }
 
 /**
@@ -351,9 +288,9 @@ export async function handler(
   event: APIGatewayProxyEvent,
   context: Context,
 ): Promise<APIGatewayProxyResult> {
-  // Initialize services on first invocation (Lambda warm start optimization)
-  await initializeServices();
-
+  const cfg = config();
+  const logger = getLogger();
+  const dynamoClient = getDynamoClient();
   const requestId = context.awsRequestId;
 
   logger.info(
@@ -366,30 +303,17 @@ export async function handler(
   );
 
   try {
-    // Extract user ID from Cognito authorizer
-    const userId = event.requestContext?.authorizer?.['claims']?.['sub'] as string;
+    const userId = extractUserId(event);
     if (!userId) {
-      return errorResponse(
-        401,
-        {
-          error: 'UNAUTHORIZED',
-          message: 'User not authenticated',
-          code: '401',
-        },
-        requestId,
-      );
+      return unauthorized('User not authenticated');
     }
 
     // Rate limiting (using user ID as client ID)
     if (!checkRateLimit(userId)) {
       return errorResponse(
         429,
-        {
-          error: 'RATE_LIMIT_EXCEEDED',
-          message: 'Too many requests. Please try again later.',
-          code: '429',
-        },
-        requestId,
+        'RATE_LIMIT_EXCEEDED',
+        'Too many requests. Please try again later.',
       );
     }
 
@@ -398,31 +322,12 @@ export async function handler(
     try {
       body = JSON.parse(event.body || '{}');
     } catch {
-      return errorResponse(
-        400,
-        {
-          error: 'INVALID_JSON',
-          message: 'Request body must be valid JSON',
-        },
-        requestId,
-      );
+      return badRequest('Request body must be valid JSON');
     }
 
     const validation = validateRequestBody(body);
-    if (!validation.isValid) {
-      return errorResponse(
-        400,
-        (validation.error || 'Invalid request') as UploadError,
-        requestId,
-      );
-    }
-
-    if (!validation.data) {
-      return errorResponse(
-        400,
-        'Invalid request data' as unknown as UploadError,
-        requestId,
-      );
+    if (!validation.isValid || !validation.data) {
+      return badRequest(validation.error?.message || 'Invalid request');
     }
 
     const { filename, workspaceId, contentType } = validation.data;
@@ -430,7 +335,7 @@ export async function handler(
     // Verify workspace ownership
     const workspaceCheck = await dynamoClient.send(
       new QueryCommand({
-        TableName: CONFIG.dynamodb.workspacesTable,
+        TableName: cfg.dynamodb.workspacesTable,
         IndexName: 'WorkspaceIdIndex',
         KeyConditionExpression: 'workspaceId = :workspaceId',
         ExpressionAttributeValues: {
@@ -439,39 +344,13 @@ export async function handler(
       }),
     );
 
-    if (!workspaceCheck.Items || workspaceCheck.Items.length === 0) {
-      return errorResponse(
-        404,
-        {
-          error: 'WORKSPACE_NOT_FOUND',
-          message: 'Workspace not found',
-          code: '404',
-        },
-        requestId,
-      );
+    const workspace = workspaceCheck.Items?.[0];
+    if (!workspace) {
+      return notFound('Workspace not found');
     }
 
-    const workspace = workspaceCheck.Items[0];
-    if (!workspace) {
-      return errorResponse(
-        404,
-        {
-          error: 'NOT_FOUND',
-          message: 'Workspace not found',
-        },
-        requestId,
-      );
-    }
     if (workspace['ownerId']?.S !== userId) {
-      return errorResponse(
-        403,
-        {
-          error: 'FORBIDDEN',
-          message: 'Access denied to this workspace',
-          code: '403',
-        },
-        requestId,
-      );
+      return forbidden('Access denied to this workspace');
     }
 
     // Generate document ID
@@ -507,23 +386,16 @@ export async function handler(
       uploadUrl,
       documentId,
       s3Key,
-      expiresIn: CONFIG.s3.presignedUrlExpiry,
+      expiresIn: cfg.s3.presignedUrlExpiry,
     };
 
     logger.info({ documentId, filename, requestId }, 'Upload URL generated successfully');
 
-    return successResponse(response, requestId);
+    return sharedSuccessResponse(response);
   } catch (error) {
+    const logger = getLogger();
     logger.error({ error, requestId }, 'Unexpected error processing request');
 
-    return errorResponse(
-      500,
-      {
-        error: 'INTERNAL_ERROR',
-        message: 'An unexpected error occurred',
-        code: '500',
-      },
-      requestId,
-    );
+    return errorResponse(500, 'INTERNAL_ERROR', 'An unexpected error occurred');
   }
 }

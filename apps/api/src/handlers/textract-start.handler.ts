@@ -15,15 +15,13 @@
  */
 
 import { S3Event, S3EventRecord, Context } from 'aws-lambda';
-import { S3Client, HeadObjectCommand, HeadObjectCommandOutput } from '@aws-sdk/client-s3';
+import { HeadObjectCommand, HeadObjectCommandOutput } from '@aws-sdk/client-s3';
 import {
-  TextractClient,
   StartDocumentTextDetectionCommand,
   StartDocumentTextDetectionCommandInput,
   StartDocumentTextDetectionResponse,
 } from '@aws-sdk/client-textract';
 import {
-  DynamoDBClient,
   PutItemCommand,
   PutItemCommandInput,
   UpdateItemCommand,
@@ -32,7 +30,13 @@ import {
 } from '@aws-sdk/client-dynamodb';
 import { marshall, unmarshall } from '@aws-sdk/util-dynamodb';
 import { randomUUID } from 'crypto';
-import pino from 'pino';
+import {
+  config,
+  getLogger,
+  getS3Client,
+  getTextractClient,
+  getDynamoClient,
+} from './shared';
 
 // Types
 interface DocumentMetadata {
@@ -80,64 +84,8 @@ const JobStatus = {
 } as const;
 
 // Configuration constants
-const MAX_FILE_SIZE = 52428800; // 50MB in bytes
 const RETRY_ATTEMPTS = 3;
 const RETRY_BASE_DELAY = 300; // milliseconds
-
-// Configuration from environment variables
-const CONFIG = {
-  aws: {
-    region: process.env['AWS_REGION'] || 'us-east-1',
-    accountId: process.env['AWS_ACCOUNT_ID'] || '',
-  },
-  s3: {
-    documentsBucket: process.env['S3_DOCUMENTS_BUCKET'] || '',
-  },
-  dynamodb: {
-    metadataTable: process.env['DYNAMODB_METADATA_TABLE'] || '',
-    jobsTable: process.env['DYNAMODB_JOBS_TABLE'] || '',
-  },
-  textract: {
-    snsTopicArn: process.env['TEXTRACT_SNS_TOPIC_ARN'] || '',
-    roleArn: process.env['TEXTRACT_ROLE_ARN'] || '',
-  },
-  logging: {
-    level: process.env['LOG_LEVEL'] || 'info',
-  },
-};
-
-// Lazy initialization of AWS clients
-let s3Client: S3Client;
-let textractClient: TextractClient;
-let dynamoClient: DynamoDBClient;
-let logger: pino.Logger;
-
-async function initializeServices() {
-  if (!s3Client) {
-    // Initialize AWS SDK clients
-    s3Client = new S3Client({
-      region: CONFIG.aws.region,
-    });
-
-    textractClient = new TextractClient({
-      region: CONFIG.aws.region,
-    });
-
-    dynamoClient = new DynamoDBClient({
-      region: CONFIG.aws.region,
-    });
-
-    // Structured logger
-    logger = pino({
-      level: CONFIG.logging.level,
-      formatters: {
-        level: (label) => ({ level: label }),
-      },
-    });
-
-    logger.info('Services initialized');
-  }
-}
 
 /**
  * Validates S3 event record
@@ -154,6 +102,10 @@ function isValidS3Record(record: S3EventRecord): boolean {
  * Validates PDF file via S3 HeadObject
  */
 async function validatePdfFile(bucket: string, key: string): Promise<ValidationResult> {
+  const cfg = config();
+  const logger = getLogger();
+  const s3Client = getS3Client();
+
   try {
     const headCommand = new HeadObjectCommand({
       Bucket: bucket,
@@ -176,10 +128,10 @@ async function validatePdfFile(bucket: string, key: string): Promise<ValidationR
     }
 
     // Validate file size
-    if (fileSize > MAX_FILE_SIZE) {
+    if (fileSize > cfg.validation.maxFileSizeBytes) {
       return {
         isValid: false,
-        reason: `File too large: ${fileSize} bytes. Max: ${MAX_FILE_SIZE} bytes`,
+        reason: `File too large: ${fileSize} bytes. Max: ${cfg.validation.maxFileSizeBytes} bytes`,
         contentType,
         fileSize,
       };
@@ -213,8 +165,12 @@ async function validatePdfFile(bucket: string, key: string): Promise<ValidationR
  * Updates existing record if it exists (from upload handler)
  */
 async function saveDocumentMetadata(metadata: DocumentMetadata): Promise<void> {
+  const cfg = config();
+  const logger = getLogger();
+  const dynamoClient = getDynamoClient();
+
   const params: UpdateItemCommandInput = {
-    TableName: CONFIG.dynamodb.metadataTable,
+    TableName: cfg.dynamodb.metadataTable,
     Key: marshall({ documentId: metadata.documentId }),
     UpdateExpression:
       'SET #status = :status, #bucket = :bucket, s3Key = :s3Key, fileSize = :fileSize, ' +
@@ -235,7 +191,7 @@ async function saveDocumentMetadata(metadata: DocumentMetadata): Promise<void> {
 
   await dynamoClient.send(new UpdateItemCommand(params));
   logger.info(
-    { documentId: metadata.documentId, table: CONFIG.dynamodb.metadataTable },
+    { documentId: metadata.documentId, table: cfg.dynamodb.metadataTable },
     'Document metadata updated',
   );
 }
@@ -244,9 +200,13 @@ async function saveDocumentMetadata(metadata: DocumentMetadata): Promise<void> {
  * Saves processing job metadata to DynamoDB (non-blocking)
  */
 async function saveJobMetadata(job: ProcessingJob): Promise<void> {
+  const cfg = config();
+  const logger = getLogger();
+  const dynamoClient = getDynamoClient();
+
   try {
     const params: PutItemCommandInput = {
-      TableName: CONFIG.dynamodb.jobsTable,
+      TableName: cfg.dynamodb.jobsTable,
       Item: marshall(job),
     };
 
@@ -255,7 +215,7 @@ async function saveJobMetadata(job: ProcessingJob): Promise<void> {
       {
         jobId: job.jobId,
         documentId: job.documentId,
-        table: CONFIG.dynamodb.jobsTable,
+        table: cfg.dynamodb.jobsTable,
       },
       'Job metadata saved',
     );
@@ -272,12 +232,16 @@ async function startTextractJob(
   key: string,
   documentId: string,
 ): Promise<StartDocumentTextDetectionResponse> {
+  const cfg = config();
+  const logger = getLogger();
+  const textractClient = getTextractClient();
+
   // Debug: Log SNS configuration
   logger.info(
     {
-      snsTopicArn: CONFIG.textract.snsTopicArn,
-      roleArn: CONFIG.textract.roleArn,
-      hasSnsConfig: !!CONFIG.textract.snsTopicArn && !!CONFIG.textract.roleArn,
+      snsTopicArn: cfg.textract.snsTopicArn,
+      roleArn: cfg.textract.roleArn,
+      hasSnsConfig: !!cfg.textract.snsTopicArn && !!cfg.textract.roleArn,
     },
     'Textract SNS configuration',
   );
@@ -291,10 +255,10 @@ async function startTextractJob(
     },
     ClientRequestToken: documentId, // Idempotency
     NotificationChannel:
-      CONFIG.textract.snsTopicArn && CONFIG.textract.roleArn
+      cfg.textract.snsTopicArn && cfg.textract.roleArn
         ? {
-            SNSTopicArn: CONFIG.textract.snsTopicArn,
-            RoleArn: CONFIG.textract.roleArn,
+            SNSTopicArn: cfg.textract.snsTopicArn,
+            RoleArn: cfg.textract.roleArn,
           }
         : undefined,
   };
@@ -350,10 +314,14 @@ async function startTextractJob(
  * Updates document status to FAILED in DynamoDB
  */
 async function markDocumentAsFailed(documentId: string): Promise<void> {
+  const cfg = config();
+  const logger = getLogger();
+  const dynamoClient = getDynamoClient();
+
   try {
     await dynamoClient.send(
       new PutItemCommand({
-        TableName: CONFIG.dynamodb.metadataTable,
+        TableName: cfg.dynamodb.metadataTable,
         Item: marshall({
           documentId,
           status: DocumentStatus.FAILED_TEXTRACT_START,
@@ -370,6 +338,10 @@ async function markDocumentAsFailed(documentId: string): Promise<void> {
  * Processes a single S3 record
  */
 async function processRecord(record: S3EventRecord, requestId: string): Promise<void> {
+  const cfg = config();
+  const logger = getLogger();
+  const dynamoClient = getDynamoClient();
+
   const bucket = record.s3.bucket.name;
   const key = decodeURIComponent(record.s3.object.key.replace(/\+/g, ' '));
   const filename = key.split('/').pop() || key;
@@ -424,7 +396,7 @@ async function processRecord(record: S3EventRecord, requestId: string): Promise<
   // Query DynamoDB to find the document by workspaceId and s3Key
   const queryResult = await dynamoClient.send(
     new QueryCommand({
-      TableName: CONFIG.dynamodb.metadataTable,
+      TableName: cfg.dynamodb.metadataTable,
       KeyConditionExpression: 'workspaceId = :workspaceId',
       FilterExpression: 's3Key = :s3Key',
       ExpressionAttributeValues: marshall({
@@ -453,7 +425,7 @@ async function processRecord(record: S3EventRecord, requestId: string): Promise<
     // Update status to TEXTRACT_PENDING
     await dynamoClient.send(
       new UpdateItemCommand({
-        TableName: CONFIG.dynamodb.metadataTable,
+        TableName: cfg.dynamodb.metadataTable,
         Key: marshall({ workspaceId, documentId }),
         UpdateExpression: 'SET #status = :status, updatedAt = :updatedAt',
         ExpressionAttributeNames: {
@@ -537,9 +509,8 @@ async function processRecord(record: S3EventRecord, requestId: string): Promise<
  * Main Lambda handler
  */
 export async function handler(event: S3Event, context: Context): Promise<void> {
-  // Initialize services on first invocation (Lambda warm start optimization)
-  await initializeServices();
-
+  const cfg = config();
+  const logger = getLogger();
   const requestId = context.awsRequestId;
 
   logger.info(
@@ -548,7 +519,7 @@ export async function handler(event: S3Event, context: Context): Promise<void> {
   );
 
   // Warn if SNS not configured
-  if (!CONFIG.textract.snsTopicArn || !CONFIG.textract.roleArn) {
+  if (!cfg.textract.snsTopicArn || !cfg.textract.roleArn) {
     logger.warn(
       'TEXTRACT_SNS_TOPIC_ARN or TEXTRACT_ROLE_ARN not configured. Jobs will not send notifications.',
     );

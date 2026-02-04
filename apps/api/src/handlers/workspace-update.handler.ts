@@ -5,12 +5,22 @@
 
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import {
-  DynamoDBClient,
   QueryCommand,
   UpdateItemCommand,
   AttributeValue,
 } from '@aws-sdk/client-dynamodb';
 import { unmarshall } from '@aws-sdk/util-dynamodb';
+import {
+  config,
+  extractUserId,
+  getDynamoClient,
+  wrappedSuccessResponse,
+  unauthorized,
+  forbidden,
+  notFound,
+  badRequest,
+  serverError,
+} from './shared';
 
 interface Workspace {
   workspaceId: string;
@@ -22,11 +32,6 @@ interface Workspace {
   documentCount?: number;
 }
 
-const dynamoClient = new DynamoDBClient({
-  region: process.env['AWS_REGION'] || 'us-east-1',
-});
-const WORKSPACES_TABLE = process.env['DYNAMODB_WORKSPACES_TABLE'] || '';
-
 interface UpdateWorkspaceRequest {
   name?: string;
   description?: string;
@@ -36,62 +41,26 @@ export const handler = async (
   event: APIGatewayProxyEvent,
 ): Promise<APIGatewayProxyResult> => {
   try {
-    // Extract user ID from Cognito authorizer (REST API format)
-    const userId = event.requestContext?.authorizer?.['claims']?.['sub'] as string;
+    const userId = extractUserId(event);
     if (!userId) {
-      return {
-        statusCode: 401,
-        headers: {
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Headers': 'Content-Type,Authorization',
-        },
-        body: JSON.stringify({
-          error: 'Unauthorized',
-          message: 'User not authenticated',
-        }),
-      };
+      return unauthorized();
     }
 
-    // Get workspace ID from path parameters
     const workspaceId = event.pathParameters?.['workspaceId'];
     if (!workspaceId) {
-      return {
-        statusCode: 400,
-        headers: {
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Headers': 'Content-Type,Authorization',
-        },
-        body: JSON.stringify({
-          error: 'Bad Request',
-          message: 'Workspace ID is required',
-        }),
-      };
+      return badRequest('Workspace ID is required');
     }
 
-    // Parse request body
     const body: UpdateWorkspaceRequest = event.body ? JSON.parse(event.body) : {};
 
     if (!body.name && !body.description) {
-      return {
-        statusCode: 400,
-        headers: {
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Headers': 'Content-Type,Authorization',
-        },
-        body: JSON.stringify({
-          error: 'Bad Request',
-          message: 'At least one field (name or description) is required',
-        }),
-      };
+      return badRequest('At least one field (name or description) is required');
     }
 
     // Query workspace to verify ownership
-    const queryResult = await dynamoClient.send(
+    const queryResult = await getDynamoClient().send(
       new QueryCommand({
-        TableName: WORKSPACES_TABLE,
+        TableName: config().dynamodb.workspacesTable,
         IndexName: 'WorkspaceIdIndex',
         KeyConditionExpression: 'workspaceId = :workspaceId',
         ExpressionAttributeValues: {
@@ -101,43 +70,18 @@ export const handler = async (
     );
 
     if (!queryResult.Items || queryResult.Items.length === 0) {
-      return {
-        statusCode: 404,
-        headers: {
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Headers': 'Content-Type,Authorization',
-        },
-        body: JSON.stringify({ error: 'Not Found', message: 'Workspace not found' }),
-      };
+      return notFound('Workspace not found');
     }
 
     const workspaceItem = queryResult.Items[0];
     if (!workspaceItem) {
-      return {
-        statusCode: 404,
-        headers: {
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Headers': 'Content-Type,Authorization',
-        },
-        body: JSON.stringify({ error: 'Not Found', message: 'Workspace not found' }),
-      };
+      return notFound('Workspace not found');
     }
 
     const workspace = unmarshall(workspaceItem) as Workspace;
 
-    // Verify ownership
     if (workspace.ownerId !== userId) {
-      return {
-        statusCode: 403,
-        headers: {
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Headers': 'Content-Type,Authorization',
-        },
-        body: JSON.stringify({ error: 'Forbidden', message: 'Access denied' }),
-      };
+      return forbidden();
     }
 
     // Build update expression
@@ -161,10 +105,9 @@ export const handler = async (
     expressionAttributeNames['#updatedAt'] = 'updatedAt';
     expressionAttributeValues[':updatedAt'] = { S: new Date().toISOString() };
 
-    // Update workspace
-    await dynamoClient.send(
+    await getDynamoClient().send(
       new UpdateItemCommand({
-        TableName: WORKSPACES_TABLE,
+        TableName: config().dynamodb.workspacesTable,
         Key: {
           ownerId: { S: workspace.ownerId },
           workspaceId: { S: workspaceId },
@@ -175,7 +118,6 @@ export const handler = async (
       }),
     );
 
-    // Return updated workspace
     const updatedWorkspace: Workspace = {
       ...workspace,
       ...(body.name && { name: body.name.trim() }),
@@ -183,28 +125,9 @@ export const handler = async (
       updatedAt: new Date().toISOString(),
     };
 
-    return {
-      statusCode: 200,
-      headers: {
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Headers': 'Content-Type,Authorization',
-      },
-      body: JSON.stringify({ success: true, data: updatedWorkspace }),
-    };
+    return wrappedSuccessResponse(updatedWorkspace);
   } catch (error) {
     console.error('Error updating workspace:', error);
-    return {
-      statusCode: 500,
-      headers: {
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Headers': 'Content-Type,Authorization',
-      },
-      body: JSON.stringify({
-        error: 'Internal Server Error',
-        message: 'Failed to update workspace',
-      }),
-    };
+    return serverError('Failed to update workspace');
   }
 };
