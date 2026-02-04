@@ -15,29 +15,31 @@
 
 import { SNSEvent, SNSEventRecord, Context } from 'aws-lambda';
 import {
-  TextractClient,
   GetDocumentTextDetectionCommand,
   GetDocumentTextDetectionResponse,
   Block,
   BlockType,
 } from '@aws-sdk/client-textract';
 import {
-  DynamoDBClient,
   QueryCommand,
   UpdateItemCommand,
   QueryCommandInput,
   UpdateItemCommandInput,
 } from '@aws-sdk/client-dynamodb';
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
-import {
-  BedrockRuntimeClient,
-  InvokeModelCommand,
-} from '@aws-sdk/client-bedrock-runtime';
+import { PutObjectCommand } from '@aws-sdk/client-s3';
+import { InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
 import { Client } from '@opensearch-project/opensearch';
 import { AwsSigv4Signer } from '@opensearch-project/opensearch/aws';
 import { marshall, unmarshall } from '@aws-sdk/util-dynamodb';
 import { AttributeValue } from '@aws-sdk/client-dynamodb';
-import pino from 'pino';
+import {
+  config,
+  getLogger,
+  getTextractClient,
+  getDynamoClient,
+  getS3Client,
+  getBedrockClient,
+} from './shared';
 
 // Types
 interface TextractNotification {
@@ -110,77 +112,21 @@ const JobStatus = {
   FAILED_TEXTRACT_PROCESSING: 'FAILED_TEXTRACT_PROCESSING',
 } as const;
 
-// Configuration from environment variables
-const CONFIG = {
-  aws: {
-    region: process.env['AWS_REGION'] || process.env['AWS_DEFAULT_REGION'] || 'us-east-1',
-  },
-  dynamodb: {
-    metadataTable: process.env['DYNAMODB_METADATA_TABLE'] || '',
-    jobsTable: process.env['DYNAMODB_JOBS_TABLE'] || '',
-  },
-  s3: {
-    documentsBucket: process.env['S3_DOCUMENTS_BUCKET'] || '',
-  },
-  opensearch: {
-    domain: process.env['OPENSEARCH_DOMAIN'] || '',
-    indexName: process.env['OPENSEARCH_INDEX_NAME'] || 'docintel-vectors',
-  },
-  bedrock: {
-    embeddingModel: 'amazon.titan-embed-text-v2:0',
-  },
-  textract: {
-    confidenceThreshold: parseFloat(process.env['TEXTRACT_CONFIDENCE_THRESHOLD'] || '80'),
-    costPerPage: parseFloat(process.env['TEXTRACT_COST_PER_PAGE'] || '0.0015'),
-  },
-  chunking: {
-    chunkSize: 1000,
-    overlap: 100,
-  },
-  logging: {
-    level: process.env['LOG_LEVEL'] || 'info',
-  },
-};
-
-// Lazy initialization of AWS clients
-let textractClient: TextractClient;
-let dynamoClient: DynamoDBClient;
-let s3Client: S3Client;
-let bedrockClient: BedrockRuntimeClient;
+// Lazy initialization of OpenSearch client (needs special handling)
 let osClient: Client;
-let logger: pino.Logger;
 
-async function initializeServices() {
-  if (!textractClient) {
-    textractClient = new TextractClient({
-      region: CONFIG.aws.region,
-    });
-
-    dynamoClient = new DynamoDBClient({
-      region: CONFIG.aws.region,
-    });
-
-    s3Client = new S3Client({ region: CONFIG.aws.region });
-
-    bedrockClient = new BedrockRuntimeClient({ region: CONFIG.aws.region });
-
+function getOpenSearchClient(): Client {
+  if (!osClient) {
+    const cfg = config();
     osClient = new Client({
       ...AwsSigv4Signer({
-        region: CONFIG.aws.region,
+        region: cfg.aws.region,
         service: 'es',
       }),
-      node: CONFIG.opensearch.domain,
+      node: cfg.opensearch.endpoint,
     });
-
-    logger = pino({
-      level: CONFIG.logging.level,
-      formatters: {
-        level: (label) => ({ level: label }),
-      },
-    });
-
-    logger.info('Services initialized');
   }
+  return osClient;
 }
 
 /**
@@ -190,8 +136,9 @@ function chunkText(
   text: string,
   pageNumber: number,
 ): Array<{ text: string; pageNumber: number }> {
+  const cfg = config();
   const chunks: Array<{ text: string; pageNumber: number }> = [];
-  const { chunkSize, overlap } = CONFIG.chunking;
+  const { chunkSize, overlap } = cfg.chunking;
 
   for (let i = 0; i < text.length; i += chunkSize - overlap) {
     const chunk = text.slice(i, i + chunkSize);
@@ -207,9 +154,12 @@ function chunkText(
  * Generate embedding using Bedrock Titan
  */
 async function generateEmbedding(text: string): Promise<number[]> {
+  const cfg = config();
+  const bedrockClient = getBedrockClient();
+
   const response = await bedrockClient.send(
     new InvokeModelCommand({
-      modelId: CONFIG.bedrock.embeddingModel,
+      modelId: cfg.bedrock.embeddingModelId,
       body: JSON.stringify({ inputText: text }),
     }),
   );
@@ -227,6 +177,10 @@ async function indexChunks(
   chunks: Array<{ text: string; pageNumber: number }>,
   workspaceId: string,
 ): Promise<void> {
+  const cfg = config();
+  const logger = getLogger();
+  const osClient = getOpenSearchClient();
+
   logger.info(
     { documentId, chunkCount: chunks.length, workspaceId },
     'Indexing chunks into OpenSearch',
@@ -245,7 +199,7 @@ async function indexChunks(
     const embedding = await generateEmbedding(chunk.text);
 
     await osClient.index({
-      index: CONFIG.opensearch.indexName,
+      index: cfg.opensearch.indexName,
       id: chunkId,
       body: {
         documentId,
@@ -269,6 +223,8 @@ async function indexChunks(
  * Parse SNS message to extract Textract notification
  */
 function parseTextractNotification(message: string): TextractNotification | null {
+  const logger = getLogger();
+
   try {
     const notification = JSON.parse(message) as TextractNotification;
 
@@ -290,9 +246,13 @@ function parseTextractNotification(message: string): TextractNotification | null
 async function lookupJobByTextractId(
   textractJobId: string,
 ): Promise<ProcessingJob | null> {
+  const cfg = config();
+  const logger = getLogger();
+  const dynamoClient = getDynamoClient();
+
   try {
     const params: QueryCommandInput = {
-      TableName: CONFIG.dynamodb.jobsTable,
+      TableName: cfg.dynamodb.jobsTable,
       IndexName: 'TextractJobIdIndex', // GSI on textractJobId
       KeyConditionExpression: 'textractJobId = :jobId',
       ExpressionAttributeValues: marshall({
@@ -327,6 +287,9 @@ async function lookupJobByTextractId(
  * Fetch all Textract results with pagination
  */
 async function fetchTextractResults(jobId: string): Promise<Block[]> {
+  const logger = getLogger();
+  const textractClient = getTextractClient();
+
   const allBlocks: Block[] = [];
   let nextToken: string | undefined;
   let pageCount = 0;
@@ -374,6 +337,8 @@ async function fetchTextractResults(jobId: string): Promise<Block[]> {
  * Parse Textract blocks into structured document
  */
 function parseTextractBlocks(blocks: Block[]): ParsedDocument {
+  const cfg = config();
+
   const pages: TextractPage[] = [];
   const tables: TextractTable[] = [];
   const forms: TextractForm[] = [];
@@ -401,7 +366,7 @@ function parseTextractBlocks(blocks: Block[]): ParsedDocument {
       .filter(
         (b) =>
           b.BlockType === BlockType.LINE &&
-          (b.Confidence || 0) >= CONFIG.textract.confidenceThreshold,
+          (b.Confidence || 0) >= cfg.textract.confidenceThreshold,
       )
       .sort((a, b) => {
         // Sort by vertical position (top to bottom), then horizontal (left to right)
@@ -533,6 +498,7 @@ function convertTableToMarkdown(tableBlock: Block, allBlocks: Block[]): string |
  * Extract key-value pairs from KEY_VALUE_SET blocks
  */
 function extractKeyValuePairs(blocks: Block[]): KeyValuePair[] {
+  const cfg = config();
   const pairs: KeyValuePair[] = [];
   const kvBlocks = blocks.filter((b) => b.BlockType === BlockType.KEY_VALUE_SET);
 
@@ -543,7 +509,7 @@ function extractKeyValuePairs(blocks: Block[]): KeyValuePair[] {
     const valueBlock = findValueBlock(kvBlock, blocks);
     const valueText = valueBlock ? extractTextFromBlock(valueBlock, blocks) : '';
 
-    if (keyText && (kvBlock.Confidence || 0) >= CONFIG.textract.confidenceThreshold) {
+    if (keyText && (kvBlock.Confidence || 0) >= cfg.textract.confidenceThreshold) {
       pairs.push({
         key: keyText,
         value: valueText,
@@ -591,6 +557,10 @@ async function updateJobStatus(
   status: string,
   pageCount?: number,
 ): Promise<void> {
+  const cfg = config();
+  const logger = getLogger();
+  const dynamoClient = getDynamoClient();
+
   try {
     const updateExpression = pageCount
       ? 'SET #status = :status, completedAt = :completedAt, pageCount = :pageCount'
@@ -606,7 +576,7 @@ async function updateJobStatus(
     }
 
     const params: UpdateItemCommandInput = {
-      TableName: CONFIG.dynamodb.jobsTable,
+      TableName: cfg.dynamodb.jobsTable,
       Key: marshall({ jobId }),
       UpdateExpression: updateExpression,
       ExpressionAttributeNames: {
@@ -632,11 +602,15 @@ async function updateDocumentMetadata(
   status: string,
   pageCount: number,
 ): Promise<void> {
+  const cfg = config();
+  const logger = getLogger();
+  const dynamoClient = getDynamoClient();
+
   try {
-    const textractCost = pageCount * CONFIG.textract.costPerPage;
+    const textractCost = pageCount * cfg.textract.costPerPage;
 
     const params: UpdateItemCommandInput = {
-      TableName: CONFIG.dynamodb.metadataTable,
+      TableName: cfg.dynamodb.metadataTable,
       Key: marshall({ workspaceId, documentId }),
       UpdateExpression:
         'SET #status = :status, pageCount = :pageCount, textractCost = :cost, processedAt = :processedAt',
@@ -673,6 +647,8 @@ async function processDocumentForEmbeddings(
   documentId: string,
   jobId: string,
 ): Promise<{ chunksGenerated: number; totalTokens: number; embeddingCost: number }> {
+  const logger = getLogger();
+
   // TODO: Implement actual document processing pipeline
   // This will:
   // 1. Chunk the text using sliding window
@@ -706,6 +682,10 @@ async function processDocumentForEmbeddings(
  * Process a single SNS record
  */
 async function processRecord(record: SNSEventRecord, requestId: string): Promise<void> {
+  const cfg = config();
+  const logger = getLogger();
+  const s3Client = getS3Client();
+
   const message = record.Sns.Message;
 
   logger.info({ requestId, messageId: record.Sns.MessageId }, 'Processing SNS record');
@@ -781,7 +761,7 @@ async function processRecord(record: SNSEventRecord, requestId: string): Promise
     try {
       await s3Client.send(
         new PutObjectCommand({
-          Bucket: CONFIG.s3.documentsBucket,
+          Bucket: cfg.s3.documentsBucket,
           Key: `${job.s3Key.replace('.pdf', '')}-textract.json`,
           Body: JSON.stringify({ Blocks: blocks }),
           ContentType: 'application/json',
@@ -865,7 +845,7 @@ async function processRecord(record: SNSEventRecord, requestId: string): Promise
  * Main Lambda handler
  */
 export async function handler(event: SNSEvent, context: Context): Promise<void> {
-  await initializeServices();
+  const logger = getLogger();
 
   const requestId = context.awsRequestId;
 

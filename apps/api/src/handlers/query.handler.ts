@@ -17,37 +17,21 @@
  */
 
 import { APIGatewayProxyEvent, APIGatewayProxyResult, Context } from 'aws-lambda';
-import {
-  BedrockRuntimeClient,
-  InvokeModelCommand,
-} from '@aws-sdk/client-bedrock-runtime';
+import { InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
 import { NestFactory } from '@nestjs/core';
 import { EmbeddingService } from '../modules/embedding/embedding.service';
 import { EmbeddingModule } from '../modules/embedding/embedding.module';
 import { VectorStoreService } from '../modules/vector-store/vector-store.service';
 import { VectorStoreModule } from '../modules/vector-store/vector-store.module';
 import { SearchResult } from '../modules/vector-store/vector-store.service';
-import pino from 'pino';
-
-// Configuration
-const CONFIG = {
-  aws: {
-    region: process.env['AWS_REGION'] || 'us-east-1',
-  },
-  bedrock: {
-    modelId:
-      process.env['BEDROCK_LLM_MODEL_ID'] || 'anthropic.claude-3-haiku-20240307-v1:0',
-    temperature: 0.3,
-    maxTokens: 500,
-  },
-  search: {
-    topK: 10,
-    similarityThreshold: 0.5, // Lowered from 0.7 to 0.5 for better recall
-  },
-  validation: {
-    maxQuestionLength: 500, // Max length for questions
-  },
-};
+import {
+  config,
+  getLogger,
+  getBedrockClient,
+  successResponse,
+  badRequest,
+  errorResponse,
+} from './shared';
 
 // Types
 interface QueryRequest {
@@ -95,18 +79,9 @@ interface ClaudeResponse {
   };
 }
 
-// Logger
-const logger = pino({
-  level: process.env['LOG_LEVEL'] || 'info',
-  formatters: {
-    level: (label) => ({ level: label }),
-  },
-});
-
 // Service instances (lazy loaded)
 let embeddingService: EmbeddingService;
 let vectorStoreService: VectorStoreService;
-let bedrockClient: BedrockRuntimeClient | null = null;
 
 /**
  * Get or create EmbeddingService instance
@@ -135,18 +110,6 @@ async function getVectorStoreService(): Promise<VectorStoreService> {
 }
 
 /**
- * Get or create BedrockRuntimeClient instance
- */
-function getBedrockClient(): BedrockRuntimeClient {
-  if (!bedrockClient) {
-    bedrockClient = new BedrockRuntimeClient({
-      region: CONFIG.aws.region,
-    });
-  }
-  return bedrockClient;
-}
-
-/**
  * Validate request body
  */
 function validateRequest(body: unknown): {
@@ -154,6 +117,8 @@ function validateRequest(body: unknown): {
   error?: string;
   data?: QueryRequest;
 } {
+  const cfg = config();
+
   if (!body || typeof body !== 'object') {
     return { valid: false, error: 'Request body is required' };
   }
@@ -170,10 +135,10 @@ function validateRequest(body: unknown): {
     return { valid: false, error: 'Question cannot be empty' };
   }
 
-  if (question.length > CONFIG.validation.maxQuestionLength) {
+  if (question.length > cfg.validation.maxQuestionLength) {
     return {
       valid: false,
-      error: `Question exceeds maximum length of ${CONFIG.validation.maxQuestionLength} characters`,
+      error: `Question exceeds maximum length of ${cfg.validation.maxQuestionLength} characters`,
     };
   }
 
@@ -220,12 +185,14 @@ Answer:`;
  * Call Claude 3 Haiku for answer generation
  */
 async function generateAnswer(prompt: string): Promise<string> {
+  const cfg = config();
+  const logger = getLogger();
   const client = getBedrockClient();
 
   const requestBody: ClaudeRequest = {
     anthropic_version: 'bedrock-2023-05-31',
-    max_tokens: CONFIG.bedrock.maxTokens,
-    temperature: CONFIG.bedrock.temperature,
+    max_tokens: cfg.bedrock.maxTokens,
+    temperature: cfg.bedrock.temperature,
     messages: [
       {
         role: 'user',
@@ -235,7 +202,7 @@ async function generateAnswer(prompt: string): Promise<string> {
   };
 
   const command = new InvokeModelCommand({
-    modelId: CONFIG.bedrock.modelId,
+    modelId: cfg.bedrock.llmModelId,
     contentType: 'application/json',
     accept: 'application/json',
     body: JSON.stringify(requestBody),
@@ -243,9 +210,9 @@ async function generateAnswer(prompt: string): Promise<string> {
 
   logger.debug({
     msg: 'Calling Claude 3 Haiku',
-    modelId: CONFIG.bedrock.modelId,
-    temperature: CONFIG.bedrock.temperature,
-    maxTokens: CONFIG.bedrock.maxTokens,
+    modelId: cfg.bedrock.llmModelId,
+    temperature: cfg.bedrock.temperature,
+    maxTokens: cfg.bedrock.maxTokens,
   });
 
   const response = await client.send(command);
@@ -302,48 +269,14 @@ function formatSources(chunks: SearchResult[]): Source[] {
 }
 
 /**
- * Create error response
- */
-function errorResponse(statusCode: number, message: string): APIGatewayProxyResult {
-  logger.error({
-    msg: 'Error response',
-    statusCode,
-    message,
-  });
-
-  return {
-    statusCode,
-    headers: {
-      'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': '*',
-    },
-    body: JSON.stringify({
-      error: message,
-    }),
-  };
-}
-
-/**
- * Create success response
- */
-function successResponse(data: QueryResponse): APIGatewayProxyResult {
-  return {
-    statusCode: 200,
-    headers: {
-      'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': '*',
-    },
-    body: JSON.stringify(data),
-  };
-}
-
-/**
  * Main handler function
  */
 export async function handler(
   event: APIGatewayProxyEvent,
   context: Context,
 ): Promise<APIGatewayProxyResult> {
+  const cfg = config();
+  const logger = getLogger();
   const requestId = context.awsRequestId;
 
   logger.info({
@@ -357,11 +290,11 @@ export async function handler(
     const validation = validateRequest(body);
 
     if (!validation.valid) {
-      return errorResponse(400, validation.error || 'Invalid request');
+      return badRequest(validation.error || 'Invalid request');
     }
 
     if (!validation.data) {
-      return errorResponse(400, 'Invalid request data');
+      return badRequest('Invalid request data');
     }
 
     const { question, workspaceId } = validation.data;
@@ -394,7 +327,7 @@ export async function handler(
     logger.info({
       msg: 'Step 3: Performing hybrid search in OpenSearch',
       embeddingDimensions: questionEmbedding.length,
-      topK: CONFIG.search.topK,
+      topK: cfg.search.topK,
       requestId,
     });
 
@@ -402,7 +335,7 @@ export async function handler(
     const searchResults = await vectorStoreSvc.hybridSearch(
       questionEmbedding,
       question,
-      CONFIG.search.topK,
+      cfg.search.topK,
     );
 
     logger.info({
@@ -453,25 +386,25 @@ export async function handler(
     // 5. Filter by similarity threshold
     logger.info({
       msg: 'Step 5: Filtering by similarity threshold',
-      threshold: CONFIG.search.similarityThreshold,
+      threshold: cfg.search.similarityThreshold,
       beforeCount: filteredResults.length,
       allScores: filteredResults.map((r) => r.similarity_score),
       requestId,
     });
 
     const relevantChunks = filteredResults.filter(
-      (chunk) => chunk.similarity_score >= CONFIG.search.similarityThreshold,
+      (chunk) => chunk.similarity_score >= cfg.search.similarityThreshold,
     );
 
     logger.info({
       msg: 'Filtered by similarity threshold',
-      threshold: CONFIG.search.similarityThreshold,
+      threshold: cfg.search.similarityThreshold,
       beforeCount: filteredResults.length,
       relevantCount: relevantChunks.length,
       relevantScores: relevantChunks.map((r) => r.similarity_score),
       droppedCount: filteredResults.length - relevantChunks.length,
       droppedScores: filteredResults
-        .filter((r) => r.similarity_score < CONFIG.search.similarityThreshold)
+        .filter((r) => r.similarity_score < cfg.search.similarityThreshold)
         .map((r) => r.similarity_score),
       requestId,
     });
@@ -483,7 +416,7 @@ export async function handler(
         initialResults: searchResults.length,
         afterDocFilter: filteredResults.length,
         allScores: filteredResults.map((r) => r.similarity_score),
-        threshold: CONFIG.search.similarityThreshold,
+        threshold: cfg.search.similarityThreshold,
         requestId,
       });
 
@@ -557,18 +490,24 @@ export async function handler(
       if (error.message.includes('Bedrock') || error.message.includes('Claude')) {
         return errorResponse(
           503,
+          'SERVICE_UNAVAILABLE',
           'The AI service is temporarily unavailable. Please try again later.',
         );
       }
 
       if (error.message.includes('embedding') || error.message.includes('search')) {
-        return errorResponse(500, 'Failed to search documents. Please try again.');
+        return errorResponse(
+          500,
+          'SEARCH_ERROR',
+          'Failed to search documents. Please try again.',
+        );
       }
     }
 
     // Generic error response
     return errorResponse(
       500,
+      'INTERNAL_ERROR',
       'An error occurred processing your question. Please try again.',
     );
   }
