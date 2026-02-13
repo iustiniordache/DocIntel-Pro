@@ -9,6 +9,8 @@ on:
     branches:
       - main
       - master
+    # Note: GitHub does NOT pass secrets to fork PR workflows by default.
+    # The deploy jobs also require the 'staging' environment which adds protection.
   workflow_dispatch:
     inputs:
       environment:
@@ -390,7 +392,9 @@ jobs:
     name: Deploy to Staging
     needs: [cdk-synth, build-api]
     runs-on: ubuntu-latest
+    # Only deploy from pushes to main/master (never from fork PRs)
     if: |
+      github.event_name == 'push' &&
       needs.build-api.result == 'success' &&
       needs.cdk-synth.result == 'success'
     environment:
